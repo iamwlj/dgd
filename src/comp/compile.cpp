@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,7 +22,7 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "path.h"
@@ -39,7 +39,9 @@
 
 class Cond : public ChunkAllocated {
 public:
-    void match(Cond *c1, Cond *c2);
+    void fill();
+    void save(Cond *c2);
+    void match(Cond *c2);
 
     static void create(Cond *c2);
     static void del();
@@ -62,7 +64,7 @@ void Cond::create(Cond *c2)
     c = chunknew (cchunk) Cond;
     c->prev = thiscond;
     if (c2 != (Cond *) NULL) {
-	memcpy(c->init, c2->init, COND_BMAP * sizeof(Uint));
+	c->save(c2);
     } else {
 	memset(c->init, '\0', COND_BMAP * sizeof(Uint));
     }
@@ -82,18 +84,33 @@ void Cond::del()
 }
 
 /*
- * match two init bitmaps
+ * set all conditions
  */
-void Cond::match(Cond *c1, Cond *c2)
+void Cond::fill()
 {
-    Uint *p, *q, *r;
+    memset(init, '\xff', COND_BMAP * sizeof(Uint));
+}
+
+/*
+ * save a condition
+ */
+void Cond::save(Cond *c2)
+{
+    memcpy(init, c2->init, COND_BMAP * sizeof(Uint));
+}
+
+/*
+ * match two conditions
+ */
+void Cond::match(Cond *c2)
+{
+    Uint *p, *q;
     int i;
 
     p = init;
-    q = c1->init;
-    r = c2->init;
+    q = c2->init;
     for (i = COND_BMAP; i > 0; --i) {
-	*p++ = *q++ & *r++;
+	*p++ &= *q++;
     }
 }
 
@@ -1013,7 +1030,7 @@ void Compile::funcbody(Node *n)
     flt.initZero();
     switch (ftype) {
     case T_INT:
-	n = concat(n, Node::createMon(N_RETURN, 0, Node::createInt((Int) 0)));
+	n = concat(n, Node::createMon(N_RETURN, 0, Node::createInt(0)));
 	break;
 
     case T_FLOAT:
@@ -1073,12 +1090,20 @@ void Compile::endCond()
 }
 
 /*
- * match and end two conditions
+ * save condition
+ */
+void Compile::saveCond()
+{
+    thiscond->prev->save(thiscond);
+    Cond::del();
+}
+
+/*
+ * match conditions
  */
 void Compile::matchCond()
 {
-    thiscond->prev->prev->match(thiscond->prev, thiscond);
-    Cond::del();
+    thiscond->prev->match(thiscond);
     Cond::del();
 }
 
@@ -1350,6 +1375,10 @@ void Compile::startSwitch(Node *n, int typechecked)
 	      Value::typeName(tnbuf, n->mod));
 	switch_list->type = T_NIL;
     }
+
+    Cond::create((Cond *) NULL);
+    thiscond->fill();
+    Cond::create(thiscond->prev);
 }
 
 static int cmp(cvoid*, cvoid*);
@@ -1384,8 +1413,8 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
     char tnbuf[TNBUFSIZE];
     Node **v, **w, *n;
     unsigned short i, size;
-    long l;
-    unsigned long cnt;
+    LPCint l;
+    LPCuint cnt;
     short type, sz;
 
     n = stmt;
@@ -1395,7 +1424,17 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 	    switch_list->prev->vlist = concat(n->r.right,
 					      switch_list->prev->vlist);
 	}
+
+	if (switch_list->dflt) {
+	    if (!(n->flags & F_BREAK)) {
+		thiscond->prev->match(thiscond);
+	    }
+	    thiscond->prev->prev->save(thiscond->prev);
+	}
     }
+
+    thiscond->del();
+    thiscond->del();
 
     if (switch_list->type != T_NIL) {
 	if (stmt == (Node *) NULL) {
@@ -1468,7 +1507,7 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 		 * check for duplicate cases
 		 */
 		i = size;
-		cnt = 0;
+		cnt = LPCUINT_MAX;
 		w = v;
 		for (;;) {
 		    cnt += w[0]->l.left->r.number - w[0]->l.left->l.number + 1;
@@ -1504,9 +1543,9 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 		    sz = 4;
 		}
 
-		if (i == 0 && cnt > size) {
-		    if (cnt > 0xffffffffL / 6 ||
-			(sz + 2L) * cnt > (2 * sz + 2L) * size) {
+		if (i == 0 && cnt >= size) {
+		    if (cnt >= LPCUINT_MAX / 6 ||
+			(sz + 2L) * cnt >= (2 * sz + 2L) * size) {
 			/*
 			 * no point in changing the type of switch
 			 */
@@ -1527,8 +1566,7 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 				v[0]->r.right->l.left = n;
 				l++;
 				*w++ = Node::createBin(N_PAIR, 0,
-						       Node::createInt((Int)l),
-						       n);
+						       Node::createInt(l), n);
 			    }
 			    v++;
 			}
@@ -1645,6 +1683,8 @@ Node *Compile::caseLabel(Node *n1, Node *n2)
 	}
     }
 
+    thiscond->save(thiscond->prev->prev);
+
     switch_list->ncase++;
     n2 = Node::createMon(N_CASE, 0, (Node *) NULL);
     n2->flags |= F_ENTRY | F_CASE;
@@ -1669,6 +1709,8 @@ Node *Compile::defaultLabel()
     } else if (switch_list->nesting != nesting) {
 	error("illegal jump into rlimits or catch");
     } else {
+	thiscond->save(thiscond->prev->prev);
+
 	switch_list->ncase++;
 	switch_list->dflt = TRUE;
 	n = Node::createMon(N_CASE, 0, (Node *) NULL);
@@ -1731,6 +1773,8 @@ Node *Compile::breakStmt()
     if (l == (Loop *) NULL || switch_list->env != thisloop) {
 	/* no switch, or loop inside switch */
 	l = thisloop;
+    } else {
+	thiscond->prev->match(thiscond);
     }
     if (l == (Loop *) NULL) {
 	error("break statement not inside loop or switch");
@@ -1926,8 +1970,7 @@ Node *Compile::flookup(Node *n, int typechecked)
 
     proto = Control::funCall(n->l.string, &sclass, &call, typechecked);
     n->r.right = (proto == (char *) NULL) ? (Node *) NULL :
-		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto,
-				    (Int) call);
+		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto, call);
     return n;
 }
 
@@ -1944,8 +1987,7 @@ Node *Compile::iflookup(Node *n, Node *label)
 				     label->l.string->text : (char *) NULL,
 			      &sclass, &call);
     n->r.right = (proto == (char *) NULL) ? (Node *) NULL :
-		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto,
-				    (Int) call);
+		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto, call);
     return n;
 }
 
@@ -2347,13 +2389,13 @@ Node *Compile::tst(Node *n)
 	return n;
 
     case N_FLOAT:
-	return Node::createInt((Int) !NFLT_ISZERO(n));
+	return Node::createInt(!NFLT_ISZERO(n));
 
     case N_STR:
-	return Node::createInt((Int) TRUE);
+	return Node::createInt(TRUE);
 
     case N_NIL:
-	return Node::createInt((Int) FALSE);
+	return Node::createInt(FALSE);
 
     case N_TST:
     case N_NOT:
@@ -2392,13 +2434,13 @@ Node *Compile::_not(Node *n)
 	return n;
 
     case N_FLOAT:
-	return Node::createInt((Int) NFLT_ISZERO(n));
+	return Node::createInt(NFLT_ISZERO(n));
 
     case N_STR:
-	return Node::createInt((Int) FALSE);
+	return Node::createInt(FALSE);
 
     case N_NIL:
-	return Node::createInt((Int) TRUE);
+	return Node::createInt(TRUE);
 
     case N_LAND:
 	n->type = N_LOR;

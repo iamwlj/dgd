@@ -1,6 +1,6 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -99,7 +99,7 @@ bool Float::atof(char **s, Float *f)
     const double *t;
     unsigned short e;
     char *p, *q;
-    bool negative;
+    bool negative, digits;
 
     p = *s;
 
@@ -112,6 +112,7 @@ bool Float::atof(char **s, Float *f)
     }
 
     a = 0.0;
+    digits = FALSE;
 
     /* digits before . */
     while (isdigit(*p)) {
@@ -119,6 +120,7 @@ bool Float::atof(char **s, Float *f)
 	if (!isfinite(a)) {
 	    return FALSE;
 	}
+	digits = TRUE;
     }
 
     /* digits after . */
@@ -127,7 +129,11 @@ bool Float::atof(char **s, Float *f)
 	while (isdigit(*++p)) {
 	    a += b * (*p - '0');
 	    b *= tenths[0];
+	    digits = TRUE;
 	}
+    }
+    if (!digits) {
+	return FALSE;
     }
 
     /* exponent */
@@ -298,7 +304,7 @@ void Float::ftoa(char *buffer)
 /*
  * convert an integer to a float
  */
-void Float::itof(Int i, Float *f)
+void Float::itof(LPCint i, Float *f)
 {
     f_put(f, (double) i);
 }
@@ -306,23 +312,23 @@ void Float::itof(Int i, Float *f)
 /*
  * convert a float to an integer
  */
-Int Float::ftoi()
+LPCint Float::ftoi()
 {
     double a;
 
     a = f_get(this);
     if (a >= 0) {
 	a = ::floor(a + 0.5);
-	if (a > (double) (Int) INT_MAX) {
+	if (a > (double) (LPCint) LPCINT_MAX) {
 	    f_erange();
 	}
     } else {
 	a = ::ceil(a - 0.5);
-	if (a < (double) (Int) INT_MIN) {
+	if (a < (double) (LPCint) LPCINT_MIN) {
 	    f_erange();
 	}
     }
-    return (Int) a;
+    return (LPCint) a;
 }
 
 /*
@@ -414,7 +420,7 @@ void Float::fmod(Float &f)
 /*
  * split a float into a fraction and an exponent
  */
-Int Float::frexp()
+LPCint Float::frexp()
 {
     short e;
 
@@ -429,7 +435,7 @@ Int Float::frexp()
 /*
  * make a float from a fraction and an exponent
  */
-void Float::ldexp(Int exp)
+void Float::ldexp(LPCint exp)
 {
     if (high == 0) {
 	return;

@@ -27,10 +27,10 @@ all:
 dgd:	$(OBJ)
 	@for i in $(OBJ); do echo comp/$$i; done > dgd
 
-parser.cpp dparser.h: parser.y
+parser.cpp parser.h: parser.y
 	$(YACC) -d parser.y
 	mv y.tab.c parser.cpp
-	mv y.tab.h dparser.h
+	mv y.tab.h parser.h
 
 clean:
 	rm -f dgd a.out $(OBJ)
@@ -47,7 +47,7 @@ parser.o compile.o: ../lex/ppcontrol.h
 parser.o control.o optimize.o codegen.o: ../kfun/table.h
 
 $(OBJ): comp.h node.h
-parser.o control.o optimize.o codegen.o compile.o: dcontrol.h
+parser.o control.o optimize.o codegen.o compile.o: control.h
 codegen.o compile.o: codegen.h
 parser.o control.o optimize.o codegen.o compile.o: compile.h
 optimize.o compile.o: optimize.h

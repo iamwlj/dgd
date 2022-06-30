@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -592,7 +592,7 @@ Int Parser::traverse(PNode *pn, PNode *next)
 		    EC->push();
 		    PUSH_ARRVAL(frame, a);
 		    call = frame->call(OBJR(frame->oindex),
-				       (Array *) NULL, pn->text + 2 + n,
+				       (LWO *) NULL, pn->text + 2 + n,
 				       UCHAR(pn->text[1]) - n - 1, TRUE, 1);
 		    EC->pop();
 		} catch (const char*) {
@@ -784,7 +784,7 @@ void Parser::save()
 
 	/* grammar */
 	v = val.array->elts;
-	PUT_INTVAL(v, ((Int) fasize << 16) + lrsize);
+	PUT_INTVAL(v, ((LPCint) fasize << 16) + lrsize);
 	v++;
 	PUT_STRVAL(v, source);
 	v++;
@@ -824,7 +824,7 @@ void Parser::save()
 /*
  * parse a string
  */
-Array *Parser::parse_string(Frame *f, String *source, String *str, Int maxalt)
+Array *Parser::parse_string(Frame *f, String *source, String *str, LPCint maxalt)
 {
     Dataspace *data;
     Parser *ps;

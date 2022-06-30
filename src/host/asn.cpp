@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -1304,8 +1304,7 @@ String *Asi::numtostr(bool minus)
     }
     len = (len >> 3) + 1;
 
-    str = String::create((char *) NULL,
-			 (long) sz * sizeof(Uint) + len + prefix);
+    str = String::create((char *) NULL, sz * sizeof(Uint) + len + prefix);
     text = str->text;
     if (prefix) {
 	/* extra sign indicator */
@@ -1332,12 +1331,12 @@ String *Asi::numtostr(bool minus)
 /*
  * count ticks for operation, return TRUE if out of ticks
  */
-bool ASN::ticks(Frame *f, Uint ticks)
+bool ASN::ticks(Frame *f, LPCuint ticks)
 {
     f->addTicks(ticks);
     if (f->rlim->ticks < 0) {
 	if (f->rlim->noticks) {
-	    f->rlim->ticks = 0x7fffffffL;
+	    f->rlim->ticks = LPCINT_MAX;
 	} else {
 	    return TRUE;
 	}
@@ -1683,7 +1682,7 @@ String *ASN::mod(Frame *f, String *s1, String *s2)
  */
 String *ASN::pow(Frame *f, String *s1, String *s2, String *s3)
 {
-    Uint ticks1, ticks2;
+    LPCuint ticks1, ticks2;
     bool minusa, minusb;
     String *str;
 
@@ -1706,7 +1705,7 @@ String *ASN::pow(Frame *f, String *s1, String *s2, String *s3)
 	EC->error("Out of ticks");
     }
     ticks1 = ticks2 << 5;
-    if (ticks1 >> 5 != ticks2 || (Int) ticks1 < 0 || ticks(f, ticks1)) {
+    if (ticks1 >> 5 != ticks2 || (LPCint) ticks1 < 0 || ticks(f, ticks1)) {
 	AFREE(b.num);
 	AFREE(a.num);
 	AFREE(mod.num);
@@ -1786,7 +1785,7 @@ String *ASN::modinv(Frame *f, String *s1, String *s2)
 /*
  * left shift an ASN
  */
-String *ASN::lshift(Frame *f, String *s1, Int shift, String *s2)
+String *ASN::lshift(Frame *f, String *s1, LPCint shift, String *s2)
 {
     Uint size;
     Asi a, t;
@@ -1855,7 +1854,7 @@ String *ASN::lshift(Frame *f, String *s1, Int shift, String *s2)
 /*
  * right shift the ASN
  */
-String *ASN::rshift(Frame *f, String *s, Int shift)
+String *ASN::rshift(Frame *f, String *s, LPCint shift)
 {
     bool minusa;
     String *str;
@@ -1883,7 +1882,7 @@ String *ASN::rshift(Frame *f, String *s, Int shift)
  */
 String *ASN::_and(Frame *f, String *s1, String *s2)
 {
-    char *p, *q, *r, *buf;
+    char *p, *q, *r;
     ssizet i, j;
     String *str;
 
@@ -1899,7 +1898,8 @@ String *ASN::_and(Frame *f, String *s1, String *s2)
 	r = s1->text;
     }
     f->addTicks(4 + ((i + j) >> 4));
-    buf = p = ALLOCA(char, i + j);
+    str = String::create((char *) NULL, (long) i + j);
+    p = str->text;
     if (q[0] & 0x80) {
 	while (j != 0) {
 	    *p++ = *r++;
@@ -1917,19 +1917,6 @@ String *ASN::_and(Frame *f, String *s1, String *s2)
 	--i;
     }
 
-    i = p - buf;
-    p = buf;
-    while (i != 0 && *p == '\0') {
-	p++;
-	--i;
-    }
-    if (p != buf && (i == 0 || (*p & 0x80))) {
-	--p;
-	i++;
-    }
-    str = String::create(p, i);
-    AFREE(buf);
-
     return str;
 }
 
@@ -1938,7 +1925,7 @@ String *ASN::_and(Frame *f, String *s1, String *s2)
  */
 String *ASN::_or(Frame *f, String *s1, String *s2)
 {
-    char *p, *q, *r, *buf;
+    char *p, *q, *r;
     ssizet i, j;
     String *str;
 
@@ -1954,7 +1941,8 @@ String *ASN::_or(Frame *f, String *s1, String *s2)
 	r = s1->text;
     }
     f->addTicks(4 + ((i + j) >> 4));
-    buf = p = ALLOCA(char, i + j);
+    str = String::create((char *) NULL, (long) i + j);
+    p = str->text;
     if (q[0] & 0x80) {
 	r += j;
 	while (j != 0) {
@@ -1972,19 +1960,6 @@ String *ASN::_or(Frame *f, String *s1, String *s2)
 	--i;
     }
 
-    i = p - buf;
-    p = buf;
-    while (i != 0 && *p == '\0') {
-	p++;
-	--i;
-    }
-    if (p != buf && (i == 0 || (*p & 0x80))) {
-	--p;
-	i++;
-    }
-    str = String::create(p, i);
-    AFREE(buf);
-
     return str;
 }
 
@@ -1993,7 +1968,7 @@ String *ASN::_or(Frame *f, String *s1, String *s2)
  */
 String *ASN::_xor(Frame *f, String *s1, String *s2)
 {
-    char *p, *q, *r, *buf;
+    char *p, *q, *r;
     ssizet i, j;
     String *str;
 
@@ -2009,7 +1984,8 @@ String *ASN::_xor(Frame *f, String *s1, String *s2)
 	r = s1->text;
     }
     f->addTicks(4 + ((i + j) >> 4));
-    buf = p = ALLOCA(char, i + j);
+    str = String::create((char *) NULL, (long) i + j);
+    p = str->text;
     if (q[0] & 0x80) {
 	while (j != 0) {
 	    *p++ = ~*r++;
@@ -2025,19 +2001,6 @@ String *ASN::_xor(Frame *f, String *s1, String *s2)
 	*p++ = *q++ ^ *r++;
 	--i;
     }
-
-    i = p - buf;
-    p = buf;
-    while (i != 0 && *p == '\0') {
-	p++;
-	--i;
-    }
-    if (p != buf && (i == 0 || (*p & 0x80))) {
-	--p;
-	i++;
-    }
-    str = String::create(p, i);
-    AFREE(buf);
 
     return str;
 }

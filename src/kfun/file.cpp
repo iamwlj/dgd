@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -40,7 +40,7 @@ int kf_editor(Frame *f, int nargs, KFun *kf)
 
     UNREFERENCED_PARAMETER(kf);
 
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	EC->error("editor() in non-persistent object");
     }
     obj = OBJW(f->oindex);
@@ -410,7 +410,7 @@ int kf_save_object(Frame *f, int n, KFun *kf)
     ctrl = f->ctrl;
     Array::merge();
     x.narrays = 0;
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	var = &f->lwobj->elts[2];
     } else {
 	var = f->data->variable(0);
@@ -831,7 +831,7 @@ static char *restore_value(restcontext *x, char *buf, Value *val)
 
     case '#':
 	buf = restore_int(x, buf + 1, val);
-	if ((Uint) val->number >= x->narrays) {
+	if ((LPCuint) val->number >= x->narrays) {
 	    restore_error(x, "bad array reference");
 	}
 	*val = *ac_get(x, (Uint) val->number);
@@ -842,7 +842,7 @@ static char *restore_value(restcontext *x, char *buf, Value *val)
 
     case '@':
 	buf = restore_int(x, buf + 1, val);
-	if ((Uint) val->number >= x->narrays) {
+	if ((LPCuint) val->number >= x->narrays) {
 	    restore_error(x, "bad mapping reference");
 	}
 	*val = *ac_get(x, (Uint) val->number);
@@ -927,7 +927,7 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
      */
     ctrl = obj->control();
     data = f->data;
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	var = &f->lwobj->elts[2];
     } else {
 	var = data->variable(0);
@@ -967,7 +967,7 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
     try {
 	EC->push();
 	for (;;) {
-	    if (f->lwobj != (Array *) NULL) {
+	    if (f->lwobj != (LWO *) NULL) {
 		var = &f->lwobj->elts[2];
 	    } else {
 		var = data->variables;
@@ -1052,7 +1052,7 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
 				tmp.del();
 				restore_error(&x, "value has wrong type");
 			    }
-			    if (f->lwobj != (Array *) NULL) {
+			    if (f->lwobj != (LWO *) NULL) {
 				data->assignElt(f->lwobj, var, &tmp);
 			    } else {
 				data->assignVar(var, &tmp);
@@ -1126,7 +1126,7 @@ int kf_write_file(Frame *f, int nargs, KFun *kf)
 	EC->error("write_file() within atomic function");
     }
 
-    f->addTicks(1000 + (Int) 2 * f->sp->string->len);
+    f->addTicks(1000 + (LPCint) 2 * f->sp->string->len);
     f->sp[1].string->del();
     PUT_INTVAL(&f->sp[1], 0);
 
@@ -1177,7 +1177,7 @@ int kf_read_file(Frame *f, int nargs, KFun *kf)
     char file[STRINGSZ], *buf;
     struct stat sbuf;
     off_t l;
-    Int size;
+    LPCint size;
     static int fd;
 
     UNREFERENCED_PARAMETER(kf);
@@ -1236,7 +1236,7 @@ int kf_read_file(Frame *f, int nargs, KFun *kf)
     if (size == 0 || size > sbuf.st_size) {
 	size = sbuf.st_size;
     }
-    if (size > (Uint) MAX_STRLEN) {
+    if (size > (LPCuint) MAX_STRLEN) {
 	P_close(fd);
 	EC->error("String too long");
     }
@@ -1501,8 +1501,8 @@ static int match(char *pat, char *text)
 
 struct fileinfo {
     String *name;		/* file name */
-    Int size;			/* file size */
-    Int time;			/* file time */
+    LPCint size;		/* file size */
+    LPCint time;		/* file time */
 };
 
 /*

@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -30,8 +30,8 @@ public:
     void trunc();
     void round();
     int cmp(Flt *b);
-    void itof(Int i);
-    Int ftoi();
+    void itof(LPCint i);
+    LPCint ftoi();
     void toFloat(Float *f);
     void fromFloat(Float *f);
     void poly(Flt *coef, int n);
@@ -500,9 +500,9 @@ int Flt::cmp(Flt *b)
 /*
  * convert an integer to a Flt
  */
-void Flt::itof(Int i)
+void Flt::itof(LPCint i)
 {
-    Uint n;
+    LPCuint n;
     unsigned short shift;
 
     /* deal with zero and sign */
@@ -522,7 +522,7 @@ void Flt::itof(Int i)
 	n <<= 8;
 	shift += 8;
     }
-    while ((Int) n >= 0) {
+    while ((LPCint) n >= 0) {
 	n <<= 1;
 	shift++;
     }
@@ -534,9 +534,9 @@ void Flt::itof(Int i)
 /*
  * convert a Flt to an integer, discarding the fractional part
  */
-Int Flt::ftoi()
+LPCint Flt::ftoi()
 {
-    Uint i;
+    LPCuint i;
 
     if (exp < BIAS) {
 	return 0;
@@ -944,6 +944,7 @@ bool Float::atof(char **s, Float *f)
     Flt b, c, *t;
     unsigned short e, h;
     char *p, *q;
+    bool digits;
 
     p = *s;
 
@@ -957,6 +958,7 @@ bool Float::atof(char **s, Float *f)
 
     a.exp = 0;
     b.low = 0;
+    digits = FALSE;
 
     /* digits before . */
     while (isdigit(*p)) {
@@ -975,6 +977,7 @@ bool Float::atof(char **s, Float *f)
 	if (a.exp > 0xffff - 10) {
 	    return FALSE;
 	}
+	digits = TRUE;
     }
 
     /* digits after . */
@@ -997,7 +1000,11 @@ bool Float::atof(char **s, Float *f)
 		}
 		c.mult(&tenths[0]);
 	    }
+	    digits = TRUE;
 	}
+    }
+    if (!digits) {
+	return FALSE;
     }
 
     /* exponent */
@@ -1173,7 +1180,7 @@ void Float::ftoa(char *buffer)
 /*
  * convert an integer to a float
  */
-void Float::itof(Int i, Float *f)
+void Float::itof(LPCint i, Float *f)
 {
     Flt a;
 
@@ -1184,7 +1191,7 @@ void Float::itof(Int i, Float *f)
 /*
  * convert a float to an integer
  */
-Int Float::ftoi()
+LPCint Float::ftoi()
 {
     Flt a;
 
@@ -1330,7 +1337,7 @@ void Float::fmod(Float &f)
 /*
  * split a float into a fraction and an exponent
  */
-Int Float::frexp()
+LPCint Float::frexp()
 {
     short e;
 
@@ -1345,7 +1352,7 @@ Int Float::frexp()
 /*
  * make a float from a fraction and an exponent
  */
-void Float::ldexp(Int exp)
+void Float::ldexp(LPCint exp)
 {
     if (high == 0) {
 	return;

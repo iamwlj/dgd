@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -31,7 +31,7 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "macro.h"
@@ -100,7 +100,7 @@ private:
        XOR_EQ OR_EQ COLON_COLON DOT_DOT ELLIPSIS STRING_CONST IDENTIFIER
 
 %union {
-    Int number;			/* lex input */
+    LPCint number;		/* lex input */
     Float real;			/* lex input */
     unsigned short type;	/* internal */
     class Node *node;		/* internal */
@@ -507,12 +507,41 @@ nocase_stmt
 		{ Compile::startCond2(); }
 	  stmt
 		{
-		  Compile::matchCond();
+		  if ($1 != (Node *) NULL && $4 != (Node *) NULL) {
+		      if (!(($1->flags | $4->flags) & F_END)) {
+			  Compile::matchCond();
+			  Compile::saveCond();
+		      } else if (!($4->flags & F_END)) {
+			  Compile::saveCond();
+			  Compile::saveCond();
+		      } else {
+			  Compile::endCond();
+			  if (!($1->flags & F_END)) {
+			      Compile::saveCond();
+			  } else {
+			      Compile::endCond();
+			  }
+		      }
+		  } else {
+		      Compile::endCond();
+		      Compile::endCond();
+		  }
 		  $$ = Compile::endIfStmt($1, $4);
 		}
-	| DO	{ Compile::loop(); }
-	  stmt WHILE '(' f_list_exp ')' ';'
-		{ $$ = Compile::doStmt($6, $3); }
+	| DO	{
+		  Compile::loop();
+		  Compile::startCond();
+		}
+	  stmt WHILE '('
+		{
+		  Compile::endCond();
+		  Compile::startCond();
+		}
+	  f_list_exp ')' ';'
+		{
+		  Compile::endCond();
+		  $$ = Compile::doStmt($7, $3);
+		}
 	| WHILE '(' f_list_exp ')'
 		{
 		  Compile::loop();
@@ -522,15 +551,18 @@ nocase_stmt
 		  Compile::endCond();
 		  $$ = Compile::whileStmt($3, $6);
 		}
-	| FOR '(' opt_list_exp ';' f_opt_list_exp ';' opt_list_exp ')'
+	| FOR '(' opt_list_exp ';' f_opt_list_exp ';'
+		{ Compile::startCond(); }
+	  opt_list_exp ')'
 		{
+		  Compile::endCond();
 		  Compile::loop();
 		  Compile::startCond();
 		}
 	  stmt	{
 		  Compile::endCond();
 		  $$ = Compile::forStmt(Compile::exprStmt($3), $5,
-					Compile::exprStmt($7), $10);
+					Compile::exprStmt($8), $11);
 		}
 	| RLIMITS '(' f_list_exp ';' f_list_exp ')'
 		{
@@ -596,15 +628,9 @@ nocase_stmt
 		  $$ = Compile::doneCatch($3, $5, TRUE);
 		}
 	| SWITCH '(' f_list_exp ')'
-		{
-		  Compile::startSwitch($3, typechecking);
-		  Compile::startCond();
-		}
+		{ Compile::startSwitch($3, typechecking); }
 	  compound_stmt
-		{
-		  Compile::endCond();
-		  $$ = Compile::endSwitch($3, $6);
-		}
+		{ $$ = Compile::endSwitch($3, $6); }
 	| ident ':'
 		{ $<node>2 = Compile::label($1); }
 	  stmt	{ $$ = Compile::concat($<node>2, $4); }
@@ -806,8 +832,7 @@ prefix_exp
 		  $$ = $2;
 		  YYParser::_void($$);
 		  if ($$->mod == T_INT) {
-		      $$ = YYParser::_xor(N_XOR, $$, Node::createInt((Int) -1),
-					  "^");
+		      $$ = YYParser::_xor(N_XOR, $$, Node::createInt(-1), "^");
 		  } else if ($$->mod == T_OBJECT || $$->mod == T_CLASS) {
 		      $$ = Node::createMon(N_NEG, T_OBJECT, $$);
 		  } else {
@@ -897,14 +922,24 @@ bitor_oper_exp
 
 and_oper_exp
 	: bitor_oper_exp
-	| and_oper_exp LAND bitor_oper_exp
-		{ $$ = YYParser::land($1, $3); }
+	| and_oper_exp LAND
+		{ Compile::startCond(); }
+	  bitor_oper_exp
+		{
+		  Compile::endCond();
+		  $$ = YYParser::land($1, $4);
+		}
 	;
 
 or_oper_exp
 	: and_oper_exp
-	| or_oper_exp LOR and_oper_exp
-		{ $$ = YYParser::lor($1, $3); }
+	| or_oper_exp LOR
+		{ Compile::startCond(); }
+	  and_oper_exp
+		{
+		  Compile::endCond();
+		  $$ = YYParser::lor($1, $4);
+		}
 	;
 
 cond_exp
@@ -916,6 +951,7 @@ cond_exp
 	  cond_exp
 		{
 		  Compile::matchCond();
+		  Compile::saveCond();
 		  $$ = YYParser::quest($1, $4, $7);
 		}
 	;
@@ -1116,7 +1152,7 @@ Node *YYParser::prefix(int op, Node *n, const char *name)
 Node *YYParser::cast(Node *n, Node *type)
 {
     Float flt;
-    Int i;
+    LPCint i;
     char *p, buffer[18];
 
     if (type->mod != n->mod) {
@@ -1263,7 +1299,7 @@ Node *YYParser::idx(Node *n1, Node *n2)
 
     if (n1->type == N_STR && n2->type == N_INT) {
 	/* str [ int ] */
-	if (n2->l.number < 0 || n2->l.number >= (Int) n1->l.string->len) {
+	if (n2->l.number < 0 || n2->l.number >= (LPCint) n1->l.string->len) {
 	    Compile::error("string index out of range");
 	} else {
 	    n2->l.number =
@@ -1284,7 +1320,7 @@ Node *YYParser::idx(Node *n1, Node *n2)
 	    }
 	    if (type != T_MIXED &&
 		(n1->type != N_FUNC ||
-		 n1->r.number != (((long) KFCALL << 24) | KF_CALL_TRACE))) {
+		 n1->r.number != (((LPCint) KFCALL << 24) | KF_CALL_TRACE))) {
 		/* you can't trust these arrays */
 		n2 = Node::createMon(N_CAST, type,
 				     Node::createBin(N_INDEX, type, n1, n2));
@@ -1325,7 +1361,7 @@ Node *YYParser::range(Node *n1, Node *n2, Node *n3)
 
     if (n1->type == N_STR && (n2 == (Node *) NULL || n2->type == N_INT) &&
 	(n3 == (Node *) NULL || n3->type == N_INT)) {
-	Int from, to;
+	LPCint from, to;
 
 	/* str [ int .. int ] */
 	from = (n2 == (Node *) NULL) ? 0 : n2->l.number;
@@ -1459,7 +1495,7 @@ Node *YYParser::mdiv(int op, Node *n1, Node *n2, const char *name)
     Float f1, f2;
 
     if (n1->type == N_INT && n2->type == N_INT) {
-	Int i, d;
+	LPCint i, d;
 
 	/* i / i */
 	i = n1->l.number;
@@ -1494,7 +1530,7 @@ Node *YYParser::mdiv(int op, Node *n1, Node *n2, const char *name)
 Node *YYParser::mod(int op, Node *n1, Node *n2, const char *name)
 {
     if (n1->type == N_INT && n2->type == N_INT) {
-	Int i, d;
+	LPCint i, d;
 
 	/* i % i */
 	i = n1->l.number;
@@ -1643,7 +1679,7 @@ Node *YYParser::umin(Node *n)
 	    flt.initZero();
 	    n = sub(N_SUB, Node::createFloat(&flt), n, "-");
 	} else {
-	    n = sub(N_SUB, Node::createInt((Int) 0), n, "-");
+	    n = sub(N_SUB, Node::createInt(0), n, "-");
 	}
     }
     return n;
@@ -1661,8 +1697,8 @@ Node *YYParser::lshift(int op, Node *n1, Node *n2, const char *name)
 	}
 	if (n1->type == N_INT) {
 	    /* i << i */
-	    n1->l.number = (n2->l.number < 32) ?
-			    (Uint) n1->l.number << n2->l.number : 0;
+	    n1->l.number = (n2->l.number < LPCINT_BITS) ?
+			    (LPCuint) n1->l.number << n2->l.number : 0;
 	    return n1;
 	}
     }
@@ -1682,8 +1718,8 @@ Node *YYParser::rshift(int op, Node *n1, Node *n2, const char *name)
 	}
 	if (n1->type == N_INT) {
 	    /* i >> i */
-	    n1->l.number = (n2->l.number < 32) ?
-			    (Uint) n1->l.number >> n2->l.number : 0;
+	    n1->l.number = (n2->l.number < LPCINT_BITS) ?
+			    (LPCuint) n1->l.number >> n2->l.number : 0;
 	    return n1;
 	}
     }
@@ -1731,16 +1767,16 @@ Node *YYParser::rel(int op, Node *n1, Node *n2, const char *name)
 
 	switch (op) {
 	case N_GE:
-	    return Node::createInt((Int) (f1.cmp(f2) >= 0));
+	    return Node::createInt((f1.cmp(f2) >= 0));
 
 	case N_GT:
-	    return Node::createInt((Int) (f1.cmp(f2) > 0));
+	    return Node::createInt((f1.cmp(f2) > 0));
 
 	case N_LE:
-	    return Node::createInt((Int) (f1.cmp(f2) <= 0));
+	    return Node::createInt((f1.cmp(f2) <= 0));
 
 	case N_LT:
-	    return Node::createInt((Int) (f1.cmp(f2) < 0));
+	    return Node::createInt((f1.cmp(f2) < 0));
 	}
 	return n1;
     }
@@ -1748,16 +1784,16 @@ Node *YYParser::rel(int op, Node *n1, Node *n2, const char *name)
 	/* s . s */
 	switch (op) {
 	case N_GE:
-	    return Node::createInt((Int)(n1->l.string->cmp(n2->l.string) >= 0));
+	    return Node::createInt((n1->l.string->cmp(n2->l.string) >= 0));
 
 	case N_GT:
-	    return Node::createInt((Int) (n1->l.string->cmp(n2->l.string) > 0));
+	    return Node::createInt((n1->l.string->cmp(n2->l.string) > 0));
 
 	case N_LE:
-	    return Node::createInt((Int)(n1->l.string->cmp(n2->l.string) <= 0));
+	    return Node::createInt((n1->l.string->cmp(n2->l.string) <= 0));
 
 	case N_LT:
-	    return Node::createInt((Int) (n1->l.string->cmp(n2->l.string) < 0));
+	    return Node::createInt((n1->l.string->cmp(n2->l.string) < 0));
 	}
     }
 
@@ -1795,7 +1831,7 @@ Node *YYParser::eq(Node *n1, Node *n2)
 	}
 	if (nil_node == N_INT && n1->l.number == 0 && n2->type == N_STR) {
 	    /* nil == str */
-	    return Node::createInt((Int) FALSE);
+	    return Node::createInt(FALSE);
 	}
 	break;
 
@@ -1804,29 +1840,29 @@ Node *YYParser::eq(Node *n1, Node *n2)
 	    /* f == f */
 	    NFLT_GET(n1, f1);
 	    NFLT_GET(n2, f2);
-	    return Node::createInt((Int) (f1.cmp(f2) == 0));
+	    return Node::createInt((f1.cmp(f2) == 0));
 	}
 	break;
 
     case N_STR:
 	if (n2->type == N_STR) {
 	    /* s == s */
-	    return Node::createInt((Int)(n1->l.string->cmp(n2->l.string) == 0));
+	    return Node::createInt((n1->l.string->cmp(n2->l.string) == 0));
 	}
 	if (n2->type == nil_node && n2->l.number == 0) {
 	    /* s == nil */
-	    return Node::createInt((Int) FALSE);
+	    return Node::createInt(FALSE);
 	}
 	break;
 
     case N_NIL:
 	if (n2->type == N_NIL) {
 	    /* nil == nil */
-	    return Node::createInt((Int) TRUE);
+	    return Node::createInt(TRUE);
 	}
 	if (n2->type == N_STR) {
 	    /* nil == str */
-	    return Node::createInt((Int) FALSE);
+	    return Node::createInt(FALSE);
 	}
 	break;
     }

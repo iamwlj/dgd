@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -24,7 +24,7 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "path.h"
@@ -37,7 +37,7 @@
 # include "token.h"
 # include "ppcontrol.h"
 # include "node.h"
-# include "dparser.h"
+# include "parser.h"
 # include "compile.h"
 # include "table.h"
 
@@ -362,7 +362,7 @@ bool Config::restore(int fd, int fd2)
 	EC->error("Cannot restore arrsize > 2");
     }
     if ((rheader.salign >> 4) != 0) {
-	EC->error("Cannot restore Int size > 4");
+	EC->error("Cannot restore LPCint size > 4");
     }
     rialign = rheader.ilalign & 0xf;
     rlalign = UCHAR(rheader.ilalign) >> 4;
@@ -456,6 +456,7 @@ Uint Config::dsize(const char *layout)
 	    break;
 
 	case 'i':	/* Int */
+	case 'I':	/* LPCint */
 	    sz = rsz = sizeof(Int);
 	    al = ialign;
 	    ral = rialign;
@@ -620,6 +621,7 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 		break;
 
 	    case 'i':
+	    case 'I':
 		i = ALGN(i, ialign);
 		ri = ALGN(ri, rialign);
 		buf[i + header.i[0]] = rbuf[ri + rheader.i[0]];
@@ -786,9 +788,9 @@ void Config::dread(int fd, char *buf, const char *layout, Uint n)
 # define MAX_STRINGS	32
 
 static char *hotboot[MAX_STRINGS], *dirs[MAX_STRINGS];
-static char *modules[MAX_STRINGS + 1], *modconf[MAX_STRINGS + 1];
-static void (*mfdlist[MAX_STRINGS + 1])(int*, int);
-static void (*mfinish[MAX_STRINGS + 1])(int);
+static char *modules[MAX_STRINGS], *modconf[MAX_STRINGS];
+static void (*mfdlist[MAX_STRINGS])(int*, int);
+static void (*mfinish[MAX_STRINGS])(int);
 static char *bhosts[MAX_PORTS], *dhosts[MAX_PORTS], *thosts[MAX_PORTS];
 static unsigned short bports[MAX_PORTS], dports[MAX_PORTS], tports[MAX_PORTS];
 static bool attached[MAX_PORTS];
@@ -1416,7 +1418,7 @@ bool Config::includes()
  * initialize the driver
  */
 bool Config::init(char *configfile, char *snapshot, char *snapshot2,
-		  char *module, Sector *fragment)
+		  Sector *fragment)
 {
     char buf[STRINGSZ];
     int fd, fd2, i;
@@ -1465,11 +1467,25 @@ bool Config::init(char *configfile, char *snapshot, char *snapshot2,
 
     MM->staticMode();
 
-    /* remove previously added kfuns */
-    KFun::clear();
+    /* change directory */
+    if (P_chdir(path_native(buf, conf[DIRECTORY].str)) < 0) {
+	EC->message("Config error: bad base directory \"%s\"\012",	/* LF */
+		conf[DIRECTORY].str);
+	if (snapshot2 != (char *) NULL) {
+	    P_close(fd2);
+	}
+	if (snapshot != (char *) NULL) {
+	    P_close(fd);
+	}
+	MM->finish();
+	return FALSE;
+    }
 
+    /* prepare to add new kfuns */
+    KFun::clear();
     memset(mfdlist, '\0', MAX_STRINGS * sizeof(void (*)(int*, int)));
     memset(mfinish, '\0', MAX_STRINGS * sizeof(void (*)(int)));
+
     for (i = 0; modules[i] != NULL; i++) {
 	if (!Ext::load(modules[i], modconf[i], &mfdlist[i], &mfinish[i])) {
 	    EC->message("Config error: cannot load runtime extension \"%s\"\012",
@@ -1486,40 +1502,9 @@ bool Config::init(char *configfile, char *snapshot, char *snapshot2,
 	    return FALSE;
 	}
     }
-    if (module != (char *) NULL &&
-	!Ext::load(modules[i] = module, NULL, &mfdlist[i], &mfinish[i])) {
-	EC->message("Config error: cannot load runtime extension \"%s\"\012",
-		    module); /* LF*/
-	if (snapshot2 != (char *) NULL) {
-	    P_close(fd2);
-	}
-	if (snapshot != (char *) NULL) {
-	    P_close(fd);
-	}
-	modFinish(TRUE);
-	Ext::finish();
-	MM->finish();
-	return FALSE;
-    }
 
     /* initialize kfuns */
     KFun::init();
-
-    /* change directory */
-    if (P_chdir(path_native(buf, conf[DIRECTORY].str)) < 0) {
-	EC->message("Config error: bad base directory \"%s\"\012",	/* LF */
-		conf[DIRECTORY].str);
-	if (snapshot2 != (char *) NULL) {
-	    P_close(fd2);
-	}
-	if (snapshot != (char *) NULL) {
-	    P_close(fd);
-	}
-	modFinish(TRUE);
-	Ext::finish();
-	MM->finish();
-	return FALSE;
-    }
 
     /* initialize communications */
     if (!Comm::init((int) conf[USERS].num,
@@ -1752,7 +1737,7 @@ void Config::putval(Value *v, size_t n)
 {
     Float f1, f2;
 
-    if (n <= 0x7fffffffL) {
+    if (n <= LPCINT_MAX) {
 	PUT_INTVAL(v, n);
     } else {
 	Float::itof(n >> 31, &f1);
@@ -1766,7 +1751,7 @@ void Config::putval(Value *v, size_t n)
 /*
  * return resource usage information
  */
-bool Config::statusi(Frame *f, Int idx, Value *v)
+bool Config::statusi(Frame *f, LPCint idx, Value *v)
 {
     const char *version;
     uindex ncoshort, ncolong;
@@ -1915,7 +1900,7 @@ bool Config::statusi(Frame *f, Int idx, Value *v)
 Array *Config::status(Frame *f)
 {
     Value *v;
-    Int i;
+    LPCint i;
     Array *a;
 
     try {
@@ -1937,7 +1922,7 @@ Array *Config::status(Frame *f)
 /*
  * return object resource usage information
  */
-bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
+bool Config::objecti(Dataspace *data, Object *obj, LPCint idx, Value *v)
 {
     Control *ctrl;
     Object *prog;
@@ -1968,7 +1953,7 @@ bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
 
     case 4:	/* O_CALLOUTS */
 	if (O_HASDATA(obj)) {
-	    a = data->listCallouts(obj->dataspace());
+	    a = obj->dataspace()->listCallouts(data);
 	    if (a != (Array *) NULL) {
 		PUT_ARRVAL(v, a);
 	    } else {
@@ -2005,7 +1990,7 @@ bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
 Array *Config::object(Dataspace *data, Object *obj)
 {
     Value *v;
-    Int i;
+    LPCint i;
     Array *a;
 
     a = Array::createNil(data, 7);
@@ -2026,17 +2011,20 @@ Array *Config::object(Dataspace *data, Object *obj)
 
 
 /*
- * retrieve an Int from a string (utility function)
+ * retrieve an LPCint from a string (utility function)
  */
-Int strtoint(char **str)
+LPCint strtoint(char **str)
 {
     char *p;
-    Int i;
-    Int sign;
+    LPCint i;
+    LPCint sign;
 
     p = *str;
     if (*p == '-') {
 	p++;
+	if (!isdigit(*p)) {
+	    return 0;
+	}
 	sign = -1;
     } else {
 	sign = 1;
@@ -2044,11 +2032,11 @@ Int strtoint(char **str)
 
     i = 0;
     while (isdigit(*p)) {
-	if ((Uint) i > (Uint) 214748364L) {
+	if ((LPCuint) i > (LPCuint) (LPCINT_MAX / 10)) {
 	    return 0;
 	}
 	i = i * 10 + *p++ - '0';
-	if (i < 0 && ((Uint) i != (Uint) 0x80000000L || sign > 0)) {
+	if (i < 0 && ((LPCuint) i != (LPCuint) LPCINT_MIN || sign > 0)) {
 	    return 0;
 	}
     }

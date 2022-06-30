@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -51,6 +51,14 @@ typedef EINDEX_TYPE eindex;
 # define EINDEX(e)	((eindex) e)
 typedef SSIZET_TYPE ssizet;
 
+typedef Int LPCint;
+typedef Uint LPCuint;
+
+# define LPCINT_MIN	0x80000000L
+# define LPCINT_MAX	0x7fffffffL
+# define LPCINT_BITS	32
+# define LPCINT_BUFFER	12
+# define LPCUINT_MAX	0xffffffffL
 
 typedef unsigned short kfindex;
 # define KFTAB_SIZE	1024
@@ -154,7 +162,7 @@ class Config {
 public:
     static void modFinish(bool wait);
     static bool init(char *configfile, char *snapshot, char *snapshot2,
-		     char *module, Sector *fragment);
+		     Sector *fragment);
     static char *baseDir();
     static char	*driver();
     static char	**hotbootExec();
@@ -167,9 +175,9 @@ public:
     static Uint dconv(char *buf, char *rbuf, const char *layout, Uint n);
     static void dread(int fd, char *buf, const char *layout, Uint n);
 
-    static bool statusi(Frame *f, Int idx, Value *v);
+    static bool statusi(Frame *f, LPCint idx, Value *v);
     static Array *status(Frame *f);
-    static bool objecti(Dataspace *data, Object *obj, Int idx, Value *v);
+    static bool objecti(Dataspace *data, Object *obj, LPCint idx, Value *v);
     static Array *object(Dataspace *data, Object *obj);
 
     const char *name;	/* name of the option */
@@ -196,4 +204,4 @@ private:
 };
 
 /* utility functions */
-extern Int strtoint		(char**);
+extern LPCint strtoint		(char**);

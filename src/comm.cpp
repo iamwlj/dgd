@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -79,6 +79,7 @@ public:
 # define CF_OUTPUT	0x0040	/* pending output */
 # define CF_ODONE	0x0080	/* output done */
 # define CF_OPENDING	0x0100	/* waiting for connect() to complete */
+# define CF_STOPPED	0x0200	/* output stopped */
 
 /* state */
 # define TS_DATA	0
@@ -187,7 +188,7 @@ Array *User::setup(Frame *f, Object *obj)
 
     /* initialize dataspace before the object receives the user role */
     if (!O_HASDATA(obj) &&
-	f->call(obj, (Array *) NULL, (char *) NULL, 0, TRUE, 0)) {
+	f->call(obj, (LWO *) NULL, (char *) NULL, 0, TRUE, 0)) {
 	(f->sp++)->del();
     }
 
@@ -230,7 +231,7 @@ void User::del(Frame *f, Object *obj, bool destruct)
 	EC->push();
 	this_user = obj->index;
 	PUSH_INTVAL(f, destruct);
-	if (f->call(obj, (Array *) NULL, "close", 5, TRUE, 1)) {
+	if (f->call(obj, (LWO *) NULL, "close", 5, TRUE, 1)) {
 	    (f->sp++)->del();
 	}
 	this_user = olduser;
@@ -554,8 +555,13 @@ void Comm::challenge(Object *obj, String *str)
  */
 int Comm::send(Object *obj, String *str)
 {
+    Value *v;
     User *usr;
 
+    v = Dataspace::elts(Dataspace::extra(obj->data)->array);
+    if (v->number & CF_STOPPED) {
+	EC->error("Output channel closed");
+    }
     usr = &users[EINDEX(obj->etabi)];
     if (usr->flags & CF_TELNET) {
 	char outbuf[OUTBUF_SIZE];
@@ -715,6 +721,37 @@ void Comm::block(Object *obj, int block)
 }
 
 /*
+ * close output channel
+ */
+void Comm::stop(Object *obj)
+{
+    User *usr;
+    Dataspace *data;
+    Array *arr;
+    Value *v;
+
+    usr = &users[EINDEX(obj->etabi)];
+    if (!(usr->flags & CF_TELNET) &&
+	(usr->flags & (CF_UDP | CF_UDPDATA)) == CF_UDPDATA) {
+	EC->error("Message channel not enabled");
+    }
+    arr = Dataspace::extra(data = obj->data)->array;
+    v = Dataspace::elts(arr);
+    if (v->number & CF_STOPPED) {
+	EC->error("Output channel already closed");
+    } else {
+	Value val;
+
+	if (!(usr->flags & CF_FLUSH)) {
+	    usr->addtoflush(arr);
+	}
+	val = *v;
+	val.number |= CF_STOPPED;
+	data->assignElt(arr, v, &val);
+    }
+}
+
+/*
  * flush state, output and connections
  */
 void Comm::flush()
@@ -806,6 +843,10 @@ void Comm::flush()
 	if (usr->flags & CF_OUTPUT) {
 	    usr->uflush(obj, obj->data, arr);
 	}
+	if ((v->number & CF_STOPPED) && !(usr->flags & CF_STOPPED)) {
+	    usr->flags |= CF_STOPPED;
+	    usr->conn->stop();
+	}
 	/*
 	 * disconnect
 	 */
@@ -873,7 +914,7 @@ void Comm::acceptTelnet(Frame *f, Connection *conn, int port)
     usr->flags |= CF_PROMPT;
     usr->addtoflush(Dataspace::extra(obj->dataspace())->array);
     this_user = obj->index;
-    if (f->call(obj, (Array *) NULL, "open", 4, TRUE, 0)) {
+    if (f->call(obj, (LWO *) NULL, "open", 4, TRUE, 0)) {
 	(f->sp++)->del();
     }
     DGD::endTask();
@@ -904,7 +945,7 @@ void Comm::accept(Frame *f, Connection *conn, int port)
     }
 
     this_user = obj->index;
-    if (f->call(obj, (Array *) NULL, "open", 4, TRUE, 0)) {
+    if (f->call(obj, (LWO *) NULL, "open", 4, TRUE, 0)) {
 	(f->sp++)->del();
     }
     DGD::endTask();
@@ -936,7 +977,7 @@ void Comm::acceptDgram(Frame *f, Connection *conn, int port)
     }
 
     this_user = obj->index;
-    if (f->call(obj, (Array *) NULL, "open", 4, TRUE, 0)) {
+    if (f->call(obj, (LWO *) NULL, "open", 4, TRUE, 0)) {
 	(f->sp++)->del();
     }
     DGD::endTask();
@@ -1079,8 +1120,8 @@ void Comm::receive(Frame *f, Uint timeout, unsigned int mtime)
 		    if (retval < 0) {
 			obj->flags &= ~O_USER;
 			PUSH_INTVAL(f, errcode);
-			if (f->call(obj, (Array *) NULL, "unconnected", 11,
-				    TRUE, 1)) {
+			if (f->call(obj, (LWO *) NULL, "unconnected", 11, TRUE,
+				    1)) {
 			    (f->sp++)->del();
 			}
 			DGD::endTask();
@@ -1088,7 +1129,7 @@ void Comm::receive(Frame *f, Uint timeout, unsigned int mtime)
 			/*
 			 * Connection completed, call open in the user object.
 			 */
-			if (f->call(obj, (Array *) NULL, "open", 4, TRUE, 0)) {
+			if (f->call(obj, (LWO *) NULL, "open", 4, TRUE, 0)) {
 			    (f->sp++)->del();
 			}
 			DGD::endTask();
@@ -1112,7 +1153,7 @@ void Comm::receive(Frame *f, Uint timeout, unsigned int mtime)
 		usr->flags &= ~CF_ODONE;
 		--odone;
 		this_user = obj->index;
-		if (f->call(obj, (Array *) NULL, "message_done", 12, TRUE, 0)) {
+		if (f->call(obj, (LWO *) NULL, "message_done", 12, TRUE, 0)) {
 		    (f->sp++)->del();
 		    DGD::endTask();
 		}
@@ -1362,7 +1403,7 @@ void Comm::receive(Frame *f, Uint timeout, unsigned int mtime)
 			 */
 			PUSH_STRVAL(f, String::create(buffer, n));
 			this_user = obj->index;
-			if (f->call(obj, (Array *) NULL, "receive_datagram", 16,
+			if (f->call(obj, (LWO *) NULL, "receive_datagram", 16,
 				    TRUE, 1)) {
 			    (f->sp++)->del();
 			    DGD::endTask();
@@ -1375,8 +1416,8 @@ void Comm::receive(Frame *f, Uint timeout, unsigned int mtime)
 		} else if ((usr->flags & CF_UDP) && usr->conn->udpCheck()) {
 		    usr->flags |= CF_UDPDATA;
 		    this_user = obj->index;
-		    if (f->call(obj, (Array *) NULL, "datagram_attach", 15,
-				TRUE, 0)) {
+		    if (f->call(obj, (LWO *) NULL, "datagram_attach", 15, TRUE,
+				0)) {
 			(f->sp++)->del();
 			DGD::endTask();
 		    }
@@ -1400,7 +1441,7 @@ void Comm::receive(Frame *f, Uint timeout, unsigned int mtime)
 	    }
 
 	    this_user = obj->index;
-	    if (f->call(obj, (Array *) NULL, "receive_message", 15, TRUE, 1)) {
+	    if (f->call(obj, (LWO *) NULL, "receive_message", 15, TRUE, 1)) {
 		(f->sp++)->del();
 		DGD::endTask();
 	    }

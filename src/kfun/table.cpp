@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -74,7 +74,8 @@ void KFun::argError(int n)
  */
 void KFun::unary(Frame *f)
 {
-    if (!f->call((Object *) NULL, f->sp->array, name, strlen(name), TRUE, 0)) {
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp->array), name,
+		 strlen(name), TRUE, 0)) {
 	argError(1);
     }
     if (f->sp->type != T_LWOBJECT || f->sp->array->elts[0].type != T_OBJECT) {
@@ -95,7 +96,8 @@ void KFun::binary(Frame *f)
 	argError(2);
     }
 
-    if (!f->call((Object *) NULL, f->sp[1].array, name, strlen(name), TRUE, 1))
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp[1].array), name,
+		 strlen(name), TRUE, 1))
     {
 	argError(1);
     }
@@ -117,7 +119,8 @@ void KFun::compare(Frame *f)
 	argError(2);
     }
 
-    if (!f->call((Object *) NULL, f->sp[1].array, name, strlen(name), TRUE, 1))
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp[1].array), name,
+		 strlen(name), TRUE, 1))
     {
 	argError(1);
     }
@@ -135,7 +138,8 @@ void KFun::compare(Frame *f)
  */
 void KFun::ternary(Frame *f)
 {
-    if (!f->call((Object *) NULL, f->sp[2].array, name, strlen(name), TRUE, 2))
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp[2].array), name,
+		 strlen(name), TRUE, 2))
     {
 	argError(1);
     }
@@ -375,13 +379,10 @@ void KFun::jit()
 	memcpy(protos, proto, PROTO_SIZE(proto));
 	protos += PROTO_SIZE(proto);
     }
-    for (; i < nkfun; i++) {
-	n = kfind[i + 128 - KF_BUILTINS];
-	if (kfx[n] != 0) {
-	    proto = kftab[n].proto;
-	    memcpy(protos, proto, PROTO_SIZE(proto));
-	    protos += PROTO_SIZE(proto);
-	}
+    for (i = 0; i < nkf; i++) {
+	proto = kftab[kfind[i + 128]].proto;
+	memcpy(protos, proto, PROTO_SIZE(proto));
+	protos += PROTO_SIZE(proto);
     }
 
     protos -= size;
@@ -428,8 +429,13 @@ int KFun::kfunc(const char *name)
 	if (strcmp(name, "call_other") == 0) {
 	    return KF_CALL_OTHER;
 	}
-    } else if (strcmp(name, "status") == 0) {
-	return KF_STATUS;
+    } else {
+	n = strcmp(name, "strlen");
+	if (n == 0) {
+	    return KF_STRLEN;
+	} else if (n < 0 && strcmp(name, "status") == 0) {
+	    return KF_STATUS;
+	}
     }
 
     n = find(kftab, KF_BUILTINS, nkfun, name);

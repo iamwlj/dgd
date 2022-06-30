@@ -23,7 +23,7 @@
 # include "str.h"
 # include "array.h"
 # include "object.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "ext.h"
@@ -767,7 +767,7 @@ const char *Object::objName(char *name)
 /*
  * return the base name of a builtin type
  */
-const char *Object::builtinName(Int type)
+const char *Object::builtinName(LPCint type)
 {
     /*
      * builtin types have names like: /builtin/type#-1

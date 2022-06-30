@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,7 +22,7 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "ext.h"
@@ -335,7 +335,7 @@ Value *Frame::global(int inherit, int index)
     addTicks(4);
     inherit = UCHAR(ctrl->imap[p_index + inherit]);
     inherit = ctrl->inherits[inherit].varoffset;
-    if (lwobj == (Array *) NULL) {
+    if (lwobj == (LWO *) NULL) {
 	return data->variable(inherit + index);
     } else {
 	return &lwobj->elts[2 + inherit + index];
@@ -345,8 +345,8 @@ Value *Frame::global(int inherit, int index)
 /*
  * index or indexed assignment
  */
-void Frame::oper(Array *lwobj, const char *op, int nargs, Value *var,
-		 Value *idx, Value *val)
+void Frame::oper(LWO *lwobj, const char *op, int nargs, Value *var, Value *idx,
+		 Value *val)
 {
     pushValue(idx);
     if (nargs > 1) {
@@ -395,7 +395,8 @@ void Frame::index(Value *aval, Value *ival, Value *val, bool keep)
 	break;
 
     case T_LWOBJECT:
-	oper(aval->array, "[]", 1, val, ival, (Value *) NULL);
+	oper(dynamic_cast<LWO *> (aval->array), "[]", 1, val, ival,
+	     (Value *) NULL);
 	if (!keep) {
 	    ival->del();
 	    aval->array->del();
@@ -650,7 +651,7 @@ bool Frame::storeIndex(Value *var, Value *aval, Value *ival, Value *val)
 
     case T_LWOBJECT:
 	arr = aval->array;
-	oper(arr, "[]=", 2, var, ival, val);
+	oper(dynamic_cast<LWO *> (arr), "[]=", 2, var, ival, val);
 	var->del();
 	ival->del();
 	arr->del();
@@ -1014,7 +1015,7 @@ void Frame::lvalues(int n)
 /*
  * integer division
  */
-Int Frame::div(Int num, Int denom)
+LPCint Frame::div(LPCint num, LPCint denom)
 {
     if (denom == 0) {
 	EC->error("Division by zero");
@@ -1025,22 +1026,22 @@ Int Frame::div(Int num, Int denom)
 /*
  * left shift
  */
-Int Frame::lshift(Int num, Int shift)
+LPCint Frame::lshift(LPCint num, LPCint shift)
 {
-    if ((shift & ~31) != 0) {
+    if ((shift & ~(LPCINT_BITS - 1)) != 0) {
 	if (shift < 0) {
 	    EC->error("Negative left shift");
 	}
 	return 0;
     } else {
-	return (Uint) num << shift;
+	return (LPCuint) num << shift;
     }
 }
 
 /*
  * integer modulus
  */
-Int Frame::mod(Int num, Int denom)
+LPCint Frame::mod(LPCint num, LPCint denom)
 {
     if (denom == 0) {
 	EC->error("Modulus by zero");
@@ -1051,15 +1052,15 @@ Int Frame::mod(Int num, Int denom)
 /*
  * right shift
  */
-Int Frame::rshift(Int num, Int shift)
+LPCint Frame::rshift(LPCint num, LPCint shift)
 {
-    if ((shift & ~31) != 0) {
+    if ((shift & ~(LPCINT_BITS - 1)) != 0) {
 	if (shift < 0) {
 	    EC->error("Negative right shift");
 	}
 	return 0;
     } else {
-	return (Uint) num >> shift;
+	return (LPCuint) num >> shift;
     }
 }
 
@@ -1094,7 +1095,7 @@ void Frame::toFloat(Float *flt)
 /*
  * convert to integer
  */
-Int Frame::toInt()
+LPCint Frame::toInt()
 {
     Float flt;
 
@@ -1105,7 +1106,7 @@ Int Frame::toInt()
 	return flt.ftoi();
     } else if (sp->type == T_STRING) {
 	char *p;
-	Int i;
+	LPCint i;
 
 	/* from string */
 	p = sp->string->text;
@@ -1126,7 +1127,7 @@ Int Frame::toInt()
 /*
  * get the remaining stack depth (-1: infinite)
  */
-Int Frame::getDepth()
+LPCint Frame::getDepth()
 {
     RLInfo *rlim;
 
@@ -1140,7 +1141,7 @@ Int Frame::getDepth()
 /*
  * get the remaining ticks (-1: infinite)
  */
-Int Frame::getTicks()
+LPCint Frame::getTicks()
 {
     RLInfo *rlim;
 
@@ -1166,7 +1167,7 @@ void Frame::checkRlimits()
     --sp;
     sp[0] = sp[1];
     sp[1] = sp[2];
-    if (lwobj == (Array *) NULL) {
+    if (lwobj == (LWO *) NULL) {
 	PUT_OBJVAL(&sp[2], obj);
     } else {
 	PUT_LWOVAL(&sp[2], lwobj);
@@ -1184,7 +1185,7 @@ void Frame::checkRlimits()
 /*
  * create new rlimits scope
  */
-void Frame::newRlimits(Int depth, Int t)
+void Frame::newRlimits(LPCint depth, LPCint t)
 {
     RLInfo *rlim;
 
@@ -1225,7 +1226,7 @@ void Frame::newRlimits(Int depth, Int t)
  */
 void Frame::rlimits(bool privileged)
 {
-    Int newdepth, newticks;
+    LPCint newdepth, newticks;
 
     if (sp[1].type != T_INT) {
 	EC->error("Bad rlimits depth type");
@@ -1288,7 +1289,7 @@ Frame *Frame::setSp(Value *sp)
 	    (v++)->del();
 	}
 
-	if (f->lwobj != (Array *) NULL) {
+	if (f->lwobj != (LWO *) NULL) {
 	    f->lwobj->del();
 	}
 	if (f->sos) {
@@ -1426,7 +1427,7 @@ void Frame::typecheck(Frame *f, const char *name, const char *ftype,
 unsigned short Frame::switchInt(char *pc)
 {
     unsigned short h, l, m, sz, dflt;
-    Int num;
+    LPCint num;
     char *p;
 
     FETCH2U(pc, h);
@@ -1509,7 +1510,7 @@ unsigned short Frame::switchInt(char *pc)
 unsigned short Frame::switchRange(char *pc)
 {
     unsigned short h, l, m, sz, dflt;
-    Int num;
+    LPCint num;
     char *p;
 
     FETCH2U(pc, h);
@@ -1670,7 +1671,7 @@ void Frame::vfunc(int n, int nargs)
     char *p;
 
     p = &ctrl->funcalls[2L * (foffset + n)];
-    funcall((Object *) NULL, (Array *) NULL, UCHAR(p[0]), UCHAR(p[1]), nargs);
+    funcall((Object *) NULL, (LWO *) NULL, UCHAR(p[0]), UCHAR(p[1]), nargs);
 }
 
 /*
@@ -1679,7 +1680,7 @@ void Frame::vfunc(int n, int nargs)
 void Frame::interpret(char *pc)
 {
     unsigned short instr, u, u2;
-    Uint l;
+    LPCuint l;
     char *p;
     KFun *kf;
     int size, instance;
@@ -1977,7 +1978,7 @@ void Frame::interpret(char *pc)
 	case I_CALL_AFUNC:
 	case I_CALL_AFUNC | I_POP_BIT:
 	    u = FETCH1U(pc);
-	    funcall((Object *) NULL, (Array *) NULL, 0, u, FETCH1U(pc) + size);
+	    funcall((Object *) NULL, (LWO *) NULL, 0, u, FETCH1U(pc) + size);
 	    size = 0;
 	    break;
 
@@ -1985,7 +1986,7 @@ void Frame::interpret(char *pc)
 	case I_CALL_DFUNC | I_POP_BIT:
 	    u = FETCH1U(pc);
 	    u2 = FETCH1U(pc);
-	    funcall((Object *) NULL, (Array *) NULL,
+	    funcall((Object *) NULL, (LWO *) NULL,
 		    UCHAR(ctrl->imap[p_index + u]), u2, FETCH1U(pc) + size);
 	    size = 0;
 	    break;
@@ -2048,8 +2049,7 @@ void Frame::interpret(char *pc)
 /*
  * Call a function in an object. The arguments must be on the stack already.
  */
-void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
-		    int nargs)
+void Frame::funcall(Object *obj, LWO *lwobj, int p_ctrli, int funci, int nargs)
 {
     char *pc;
     unsigned short n;
@@ -2063,11 +2063,11 @@ void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
 	 * top level call
 	 */
 	f.oindex = obj->index;
-	f.lwobj = (Array *) NULL;
+	f.lwobj = (LWO *) NULL;
 	f.ctrl = obj->ctrl;
 	f.data = obj->dataspace();
 	f.external = TRUE;
-    } else if (lwobj != (Array *) NULL) {
+    } else if (lwobj != (LWO *) NULL) {
 	/*
 	 * call_other to lightweight object
 	 */
@@ -2081,7 +2081,7 @@ void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
 	 * call_other to persistent object
 	 */
 	f.oindex = obj->index;
-	f.lwobj = (Array *) NULL;
+	f.lwobj = (LWO *) NULL;
 	f.ctrl = obj->ctrl;
 	f.data = obj->dataspace();
 	f.external = TRUE;
@@ -2102,7 +2102,7 @@ void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
     }
     if (f.rlim->ticks < 100) {
 	if (f.rlim->noticks) {
-	    f.rlim->ticks = 0x7fffffff;
+	    f.rlim->ticks = LPCINT_MAX;
 	} else {
 	    EC->error("Out of ticks");
 	}
@@ -2211,7 +2211,7 @@ void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
     f.sp = sp;
     f.nargs = nargs;
     cframe = &f;
-    if (f.lwobj != (Array *) NULL) {
+    if (f.lwobj != (LWO *) NULL) {
 	f.lwobj->ref();
     }
 
@@ -2276,7 +2276,7 @@ void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
 	FREE(f.stack);
     }
 
-    if (f.lwobj != (Array *) NULL) {
+    if (f.lwobj != (LWO *) NULL) {
 	f.lwobj->del();
     }
     cframe = this;
@@ -2295,14 +2295,14 @@ void Frame::funcall(Object *obj, Array *lwobj, int p_ctrli, int funci,
 /*
  * Attempt to call a function in an object. Return TRUE if the call succeeded.
  */
-bool Frame::call(Object *obj, Array *lwobj, const char *func, unsigned int len,
+bool Frame::call(Object *obj, LWO *lwobj, const char *func, unsigned int len,
 		 int call_static, int nargs)
 {
     Symbol *symb;
     FuncDef *fdef;
     Control *ctrl;
 
-    if (lwobj != (Array *) NULL) {
+    if (lwobj != (LWO *) NULL) {
 	uindex oindex;
 	Float flt;
 	Value val;
@@ -2358,7 +2358,7 @@ bool Frame::call(Object *obj, Array *lwobj, const char *func, unsigned int len,
 	} else {
 	    obj->data = Dataspace::create(obj);
 	    if (func != (char *) NULL &&
-		call(obj, (Array *) NULL, creator, clen, TRUE, 0)) {
+		call(obj, (LWO *) NULL, creator, clen, TRUE, 0)) {
 		(sp++)->del();
 	    }
 	}
@@ -2561,7 +2561,7 @@ unsigned short Frame::line()
 /*
  * return part of a trace of a single function
  */
-bool Frame::funcTraceI(Int idx, Value *val)
+bool Frame::funcTraceI(LPCint idx, Value *val)
 {
     char buffer[STRINGSZ + 12];
     String *str;
@@ -2571,7 +2571,7 @@ bool Frame::funcTraceI(Int idx, Value *val)
     case 0:
 	/* object name */
 	name = OBJR(oindex)->objName(buffer);
-	if (lwobj == (Array *) NULL) {
+	if (lwobj == (LWO *) NULL) {
 	    PUT_STRVAL(val, str = String::create((char *) NULL,
 		       strlen(name) + 1L));
 	    str->text[0] = '/';
@@ -2664,7 +2664,7 @@ Array *Frame::funcTrace(Dataspace *data)
 /*
  * get part of the trace of a single function
  */
-bool Frame::callTraceII(Int i, Int j, Value *v)
+bool Frame::callTraceII(LPCint i, LPCint j, Value *v)
 {
     Frame *f;
 
@@ -2680,7 +2680,7 @@ bool Frame::callTraceII(Int i, Int j, Value *v)
 /*
  * get the trace of a single function
  */
-bool Frame::callTraceI(Int i, Value *v)
+bool Frame::callTraceI(LPCint i, Value *v)
 {
     Frame *f;
 
@@ -2718,7 +2718,7 @@ Array *Frame::callTrace()
 /*
  * fake error handler
  */
-static void emptyhandler(Frame *f, Int depth)
+static void emptyhandler(Frame *f, LPCint depth)
 {
     UNREFERENCED_PARAMETER(f);
     UNREFERENCED_PARAMETER(depth);
@@ -2751,7 +2751,7 @@ bool Frame::callCritical(const char *func, int narg, int flag)
 /*
  * handle a runtime error
  */
-void Frame::runtimeError(Frame *f, Int depth)
+void Frame::runtimeError(Frame *f, LPCint depth)
 {
     PUSH_STRVAL(f, EC->exception());
     PUSH_INTVAL(f, depth);
@@ -2770,7 +2770,7 @@ void Frame::runtimeError(Frame *f, Int depth)
 /*
  * handle error in atomic code
  */
-void Frame::atomicError(Int level)
+void Frame::atomicError(LPCint level)
 {
     Frame *f;
 
@@ -2793,7 +2793,7 @@ void Frame::atomicError(Int level)
 /*
  * restore state to given level
  */
-Frame *Frame::restore(Int level)
+Frame *Frame::restore(LPCint level)
 {
     Frame *f;
 
