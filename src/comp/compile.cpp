@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,12 +22,10 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "path.h"
-# include "macro.h"
-# include "token.h"
 # include "ppcontrol.h"
 # include "node.h"
 # include "optimize.h"
@@ -39,7 +37,9 @@
 
 class Cond : public ChunkAllocated {
 public:
-    void match(Cond *c1, Cond *c2);
+    void fill();
+    void save(Cond *c2);
+    void match(Cond *c2);
 
     static void create(Cond *c2);
     static void del();
@@ -62,7 +62,7 @@ void Cond::create(Cond *c2)
     c = chunknew (cchunk) Cond;
     c->prev = thiscond;
     if (c2 != (Cond *) NULL) {
-	memcpy(c->init, c2->init, COND_BMAP * sizeof(Uint));
+	c->save(c2);
     } else {
 	memset(c->init, '\0', COND_BMAP * sizeof(Uint));
     }
@@ -82,18 +82,33 @@ void Cond::del()
 }
 
 /*
- * match two init bitmaps
+ * set all conditions
  */
-void Cond::match(Cond *c1, Cond *c2)
+void Cond::fill()
 {
-    Uint *p, *q, *r;
+    memset(init, '\xff', COND_BMAP * sizeof(Uint));
+}
+
+/*
+ * save a condition
+ */
+void Cond::save(Cond *c2)
+{
+    memcpy(init, c2->init, COND_BMAP * sizeof(Uint));
+}
+
+/*
+ * match two conditions
+ */
+void Cond::match(Cond *c2)
+{
+    Uint *p, *q;
     int i;
 
     p = init;
-    q = c1->init;
-    r = c2->init;
+    q = c2->init;
     for (i = COND_BMAP; i > 0; --i) {
-	*p++ = *q++ & *r++;
+	*p++ &= *q++;
     }
 }
 
@@ -527,7 +542,7 @@ bool Compile::inherit(char *file, Node *label, int priv)
 	}
 	obj = Object::find(file, OACC_READ);
 	if (obj == (Object *) NULL) {
-	    compile(f, file, (Object *) NULL, (String **) NULL, 0, TRUE);
+	    compile(f, file, (Object *) NULL, 0, TRUE);
 	    return FALSE;
 	}
     } else {
@@ -560,7 +575,7 @@ bool Compile::inherit(char *file, Node *label, int priv)
 	    file = PM->from(buf, current->file, file);
 	    obj = Object::find(file, OACC_READ);
 	    if (obj == (Object *) NULL) {
-		compile(f, file, (Object *) NULL, (String **) NULL, 0, TRUE);
+		compile(f, file, (Object *) NULL, 0, TRUE);
 		return FALSE;
 	    }
 	}
@@ -583,8 +598,7 @@ extern int yyparse ();
 /*
  * compile an LPC file
  */
-Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
-			 int nstr, int iflag)
+Object *Compile::compile(Frame *f, char *file, Object *obj, int nstr, int iflag)
 {
     Context c;
     char file_c[STRINGSZ + 2];
@@ -603,7 +617,7 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 	    EC->error("Compilation nesting too deep");
 	}
 
-	PP::clear();
+	PP->clear();
 	Control::clear();
 	clear();
     } else if (current != (Context *) NULL) {
@@ -616,7 +630,7 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 	EC->error("Illegal object name \"/%s\"", file);
     }
     strcpy(file_c, file);
-    if (strs == (String **) NULL) {
+    if (nstr == 0) {
 	strcat(file_c, ".c");
     }
     c.frame = f;
@@ -637,8 +651,7 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 		     * compile the driver object to do pathname translation
 		     */
 		    current = (Context *) NULL;
-		    compile(f, driver_object, (Object *) NULL, (String **) NULL,
-			    0, FALSE);
+		    compile(f, driver_object, (Object *) NULL, 0, FALSE);
 		    current = &c;
 		}
 
@@ -647,8 +660,7 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 		    /*
 		     * compile auto object
 		     */
-		    aobj = compile(f, auto_object, (Object *) NULL,
-				   (String **) NULL, 0, TRUE);
+		    aobj = compile(f, auto_object, (Object *) NULL, 0, TRUE);
 		}
 		/* inherit auto object */
 		if (O_UPGRADING(aobj)) {
@@ -659,12 +671,20 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 		Control::inherit(c.frame, file, aobj, (String *) NULL, FALSE);
 	    }
 
-	    if (strs != (String **) NULL) {
-		PP::init(file_c, paths, strs, nstr, 1);
-	    } else if (!PP::init(file_c, paths, (String **) NULL, 0, 1)) {
+	    if (nstr != 0) {
+		int i;
+		Value *v;
+
+		v = f->sp;
+		PP->init(file_c, paths, v->string->text, v->string->len, 1);
+		for (i = 1; i < nstr; i++) {
+		    v++;
+		    PP->push(v->string->text, v->string->len);
+		}
+	    } else if (!PP->init(file_c, paths, (char *) NULL, 0, 1)) {
 		EC->error("Could not compile \"/%s\"", file_c);
 	    }
-	    if (!TokenBuf::include(include, (String **) NULL, 0)) {
+	    if (!PP->include(include, (char *) NULL, 0)) {
 		EC->error("Could not include \"/%s\"", include);
 	    }
 
@@ -693,7 +713,7 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 
 	    } else if (nerrors == 0) {
 		/* another try */
-		PP::clear();
+		PP->clear();
 		Control::clear();
 		clear();
 	    } else {
@@ -703,14 +723,14 @@ Object *Compile::compile(Frame *f, char *file, Object *obj, String **strs,
 	}
 	EC->pop();
     } catch (const char*) {
-	PP::clear();
+	PP->clear();
 	Control::clear();
 	clear();
 	current = c.prev;
 	EC->error((char *) NULL);
     }
 
-    PP::clear();
+    PP->clear();
     if (!seen_decls) {
 	/*
 	 * object with inherit statements only (or nothing at all)
@@ -770,7 +790,7 @@ String *Compile::objecttype(Node *n)
 	Frame *f;
 
 	f = current->frame;
-	p = TokenBuf::filename();
+	p = PP->filename();
 	PUSH_STRVAL(f, String::create(p, strlen(p)));
 	PUSH_STRVAL(f, n->l.string);
 	DGD::callDriver(f, "object_type", 2);
@@ -1013,7 +1033,7 @@ void Compile::funcbody(Node *n)
     flt.initZero();
     switch (ftype) {
     case T_INT:
-	n = concat(n, Node::createMon(N_RETURN, 0, Node::createInt((Int) 0)));
+	n = concat(n, Node::createMon(N_RETURN, 0, Node::createInt(0)));
 	break;
 
     case T_FLOAT:
@@ -1073,12 +1093,20 @@ void Compile::endCond()
 }
 
 /*
- * match and end two conditions
+ * save condition
+ */
+void Compile::saveCond()
+{
+    thiscond->prev->save(thiscond);
+    Cond::del();
+}
+
+/*
+ * match conditions
  */
 void Compile::matchCond()
 {
-    thiscond->prev->prev->match(thiscond->prev, thiscond);
-    Cond::del();
+    thiscond->prev->match(thiscond);
     Cond::del();
 }
 
@@ -1350,6 +1378,10 @@ void Compile::startSwitch(Node *n, int typechecked)
 	      Value::typeName(tnbuf, n->mod));
 	switch_list->type = T_NIL;
     }
+
+    Cond::create((Cond *) NULL);
+    thiscond->fill();
+    Cond::create(thiscond->prev);
 }
 
 static int cmp(cvoid*, cvoid*);
@@ -1384,8 +1416,8 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
     char tnbuf[TNBUFSIZE];
     Node **v, **w, *n;
     unsigned short i, size;
-    long l;
-    unsigned long cnt;
+    LPCint l;
+    LPCuint cnt;
     short type, sz;
 
     n = stmt;
@@ -1395,7 +1427,17 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 	    switch_list->prev->vlist = concat(n->r.right,
 					      switch_list->prev->vlist);
 	}
+
+	if (switch_list->dflt) {
+	    if (!(n->flags & F_BREAK)) {
+		thiscond->prev->match(thiscond);
+	    }
+	    thiscond->prev->prev->save(thiscond->prev);
+	}
     }
+
+    thiscond->del();
+    thiscond->del();
 
     if (switch_list->type != T_NIL) {
 	if (stmt == (Node *) NULL) {
@@ -1468,7 +1510,7 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 		 * check for duplicate cases
 		 */
 		i = size;
-		cnt = 0;
+		cnt = LPCUINT_MAX;
 		w = v;
 		for (;;) {
 		    cnt += w[0]->l.left->r.number - w[0]->l.left->l.number + 1;
@@ -1500,13 +1542,23 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 		    sz = 2;
 		} else if (l <= 8388607L) {
 		    sz = 3;
-		} else {
+# ifdef LARGENUM
+		} else if (l <= 2147483647LL) {
 		    sz = 4;
+		} else if (l <= 549755813887LL) {
+		    sz = 5;
+		} else if (l <= 140737488355327LL) {
+		    sz = 6;
+		} else if (l <= 36028797018963967LL) {
+		    sz = 7;
+# endif
+		} else {
+		    sz = sizeof(LPCint);
 		}
 
-		if (i == 0 && cnt > size) {
-		    if (cnt > 0xffffffffL / 6 ||
-			(sz + 2L) * cnt > (2 * sz + 2L) * size) {
+		if (i == 0 && cnt >= size) {
+		    if (cnt >= LPCUINT_MAX / 6 ||
+			(sz + 2L) * cnt >= (2 * sz + 2L) * size) {
 			/*
 			 * no point in changing the type of switch
 			 */
@@ -1516,7 +1568,7 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 			 * convert range label switch to int label switch
 			 * by adding new labels
 			 */
-			w = ALLOCA(Node*, cnt);
+			w = ALLOCA(Node*, ++cnt);
 			for (i = size; i > 0; --i) {
 			    *w++ = *v;
 			    for (l = v[0]->l.left->l.number;
@@ -1527,8 +1579,7 @@ Node *Compile::endSwitch(Node *expr, Node *stmt)
 				v[0]->r.right->l.left = n;
 				l++;
 				*w++ = Node::createBin(N_PAIR, 0,
-						       Node::createInt((Int)l),
-						       n);
+						       Node::createInt(l), n);
 			    }
 			    v++;
 			}
@@ -1633,8 +1684,7 @@ Node *Compile::caseLabel(Node *n1, Node *n2)
 	    }
 	}
 	/* compare type with other cases */
-	if (n1->l.number != 0 || n2 != (Node *) NULL ||
-	    Value::nil.type != T_INT) {
+	if (n1->l.number != 0 || n2 != (Node *) NULL || ::nil.type != T_INT) {
 	    if (switch_list->type == T_MIXED) {
 		switch_list->type = T_INT;
 	    } else if (switch_list->type != T_INT) {
@@ -1644,6 +1694,8 @@ Node *Compile::caseLabel(Node *n1, Node *n2)
 	    }
 	}
     }
+
+    thiscond->save(thiscond->prev->prev);
 
     switch_list->ncase++;
     n2 = Node::createMon(N_CASE, 0, (Node *) NULL);
@@ -1669,6 +1721,8 @@ Node *Compile::defaultLabel()
     } else if (switch_list->nesting != nesting) {
 	error("illegal jump into rlimits or catch");
     } else {
+	thiscond->save(thiscond->prev->prev);
+
 	switch_list->ncase++;
 	switch_list->dflt = TRUE;
 	n = Node::createMon(N_CASE, 0, (Node *) NULL);
@@ -1731,6 +1785,8 @@ Node *Compile::breakStmt()
     if (l == (Loop *) NULL || switch_list->env != thisloop) {
 	/* no switch, or loop inside switch */
 	l = thisloop;
+    } else {
+	thiscond->prev->match(thiscond);
     }
     if (l == (Loop *) NULL) {
 	error("break statement not inside loop or switch");
@@ -1812,7 +1868,7 @@ Node *Compile::returnStmt(Node *n, int typechecked)
 void Compile::startCompound()
 {
     if (thisblock == (CodeBlock *) NULL) {
-	fline = TokenBuf::line();
+	fline = PP->line();
     }
     CodeBlock::create();
 }
@@ -1925,9 +1981,9 @@ Node *Compile::flookup(Node *n, int typechecked)
     long call;
 
     proto = Control::funCall(n->l.string, &sclass, &call, typechecked);
-    n->r.right = (proto == (char *) NULL) ? (Node *) NULL :
-		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto,
-				    (Int) call);
+    n->r.right = (proto == (char *) NULL) ?
+		  (Node *) NULL :
+		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto, call);
     return n;
 }
 
@@ -1944,9 +2000,48 @@ Node *Compile::iflookup(Node *n, Node *label)
 				     label->l.string->text : (char *) NULL,
 			      &sclass, &call);
     n->r.right = (proto == (char *) NULL) ? (Node *) NULL :
-		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto,
-				    (Int) call);
+		  Node::createFcall(PROTO_FTYPE(proto), sclass, proto, call);
     return n;
+}
+
+/*
+ * determine combined type of an array aggregate
+ */
+unsigned int Compile::aggrType(unsigned int t1, unsigned int t2)
+{
+    if ((t2 & T_TYPE) == T_CLASS) {
+	/* from class to object */
+	t2 = (t2 & T_REF) | T_OBJECT;
+    }
+
+    switch (t1) {
+    case T_ARRAY:
+	return t2;		/* first element */
+
+    case T_NIL:
+	if (t2 == T_NIL || T_POINTER(t2)) {
+	    return t2;		/* nil matches pointer/nil */
+	}
+	/* fall through */
+    case T_MIXED:
+	break;
+
+    default:
+	if (t2 == T_NIL) {
+	    if (T_POINTER(t1)) {
+		return t1;	/* nil matches pointer */
+	    }
+	    break;
+	}
+
+	if ((t1 & T_REF) != (t2 & T_REF)) {
+	    /* unequal references */
+	    return (t1 > t2) ? (t2 & T_REF) | T_MIXED : (t1 & T_REF) | T_MIXED;
+	}
+	return (t1 == t2) ? t1 : (t1 & T_REF) | T_MIXED;
+    }
+
+    return T_MIXED;
 }
 
 /*
@@ -1954,6 +2049,22 @@ Node *Compile::iflookup(Node *n, Node *label)
  */
 Node *Compile::aggregate(Node *n, unsigned int type)
 {
+    if (type == T_ARRAY) {
+	if (!stricttc || n == NULL) {
+	    type = T_MIXED;
+	} else {
+	    Node *m;
+
+	    for (m = n; m->type == N_PAIR; m = m->l.left) {
+		type = aggrType(type, m->r.right->mod);
+	    }
+	    type = aggrType(type, m->mod);
+	    if (type == T_NIL) {
+		type = T_MIXED;
+	    }
+	}
+	type += (1 << REFSHIFT);
+    }
     return Node::createMon(N_AGGR, type, Node::revert(n));
 }
 
@@ -2196,7 +2307,7 @@ Node *Compile::address(Node *func, Node *args, int typechecked)
     }
     func = funcall(flookup(Node::createStr(String::create("new.function", 12)),
 			   FALSE),
-	        args, FALSE);
+		   args, FALSE);
     func->mod = T_CLASS;
     func->sclass = String::create(BIPREFIX "function", BIPREFIXLEN + 8);
     func->sclass->ref();
@@ -2347,13 +2458,13 @@ Node *Compile::tst(Node *n)
 	return n;
 
     case N_FLOAT:
-	return Node::createInt((Int) !NFLT_ISZERO(n));
+	return Node::createInt(!NFLT_ISZERO(n));
 
     case N_STR:
-	return Node::createInt((Int) TRUE);
+	return Node::createInt(TRUE);
 
     case N_NIL:
-	return Node::createInt((Int) FALSE);
+	return Node::createInt(FALSE);
 
     case N_TST:
     case N_NOT:
@@ -2392,13 +2503,13 @@ Node *Compile::_not(Node *n)
 	return n;
 
     case N_FLOAT:
-	return Node::createInt((Int) NFLT_ISZERO(n));
+	return Node::createInt(NFLT_ISZERO(n));
 
     case N_STR:
-	return Node::createInt((Int) FALSE);
+	return Node::createInt(FALSE);
 
     case N_NIL:
-	return Node::createInt((Int) TRUE);
+	return Node::createInt(TRUE);
 
     case N_LAND:
 	n->type = N_LOR;
@@ -2580,36 +2691,54 @@ unsigned short Compile::matchType(unsigned int type1, unsigned int type2)
 }
 
 /*
- * Call the driver object with the supplied error message.
+ * Forward the error to the preprocessor error handler.
  */
 void Compile::error(const char *format, ...)
 {
     va_list args;
-    char *fname, buf[4 * STRINGSZ];	/* file name + 2 * string + overhead */
+    char buf[3 * STRINGSZ];	/* 2 * string + overhead */
 
-    if (driver_object != (char *) NULL &&
-	Object::find(driver_object, OACC_READ) != (Object *) NULL) {
-	Frame *f;
-
-	f = current->frame;
-	fname = TokenBuf::filename();
-	PUSH_STRVAL(f, String::create(fname, strlen(fname)));
-	PUSH_INTVAL(f, TokenBuf::line());
-	va_start(args, format);
-	vsprintf(buf, format, args);
-	va_end(args);
-	PUSH_STRVAL(f, String::create(buf, strlen(buf)));
-
-	DGD::callDriver(f, "compile_error", 3);
-	(f->sp++)->del();
-    } else {
-	/* there is no driver object to call; show the error on stderr */
-	sprintf(buf, "%s, %u: ", TokenBuf::filename(), TokenBuf::line());
-	va_start(args, format);
-	vsprintf(buf + strlen(buf), format, args);
-	va_end(args);
-	EC->message("%s\012", buf);     /* LF */
-    }
-
-    nerrors++;
+    va_start(args, format);
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+    PP->error("%s", buf);
 }
+
+
+class PreprocImpl : public Preproc {
+public:
+    /*
+     * Call the driver object with the supplied error message.
+     */
+    virtual void error(const char *format, ...) {
+	va_list args;
+	char buf[3 * STRINGSZ];		/* 2 * string + overhead */
+
+	va_start(args, format);
+	vsnprintf(buf, sizeof(buf), format, args);
+	va_end(args);
+
+	if (driver_object != (char *) NULL &&
+	    Object::find(driver_object, OACC_READ) != (Object *) NULL) {
+	    Frame *f;
+	    char *fname;
+
+	    f = current->frame;
+	    fname = PP->filename();
+	    PUSH_STRVAL(f, String::create(fname, strlen(fname)));
+	    PUSH_INTVAL(f, PP->line());
+	    PUSH_STRVAL(f, String::create(buf, strlen(buf)));
+
+	    DGD::callDriver(f, "compile_error", 3);
+	    (f->sp++)->del();
+	} else {
+	    /* there is no driver object to call; fall back to the default */
+	    Preproc::error("%s", buf);
+	}
+
+	nerrors++;
+    }
+};
+
+static PreprocImpl PPI;
+Preproc *PP = &PPI;

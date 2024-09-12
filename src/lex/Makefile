@@ -1,7 +1,7 @@
 #
 # This file is part of DGD, https://github.com/dworkin/dgd
 # Copyright (C) 1993-2010 Dworkin B.V.
-# Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+# Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -30,15 +30,18 @@ dgd:	$(OBJ)
 clean:
 	rm -f dgd $(OBJ)
 
+lex:	$(OBJ) lex.o
+	$(LD) $(DEBUG) $(LDFLAGS) -o $@ $(OBJ) lex.o
 
-$(OBJ): lex.h ../config.h ../host.h ../alloc.h ../str.h ../xfloat.h
-macro.o special.o token.o ppcontrol.o: ../hash.h
-token.o ppcontrol.o: ../path.h
 
-$(OBJ): ../comp/node.h ../comp/compile.h ../comp/dparser.h
+$(OBJ) lex.o : lex.h ../config.h ../host.h ../alloc.h ../xfloat.h
+macro.o special.o token.o ppcontrol.o lex.o: ../hash.h
+token.o ppcontrol.o lex.o: ../path.h
 
-$(OBJ): lex.h
+$(OBJ) lex.o: ../comp/node.h ../comp/compile.h ../comp/parser.h
+
+$(OBJ) lex.o: lex.h
 macro.o special.o token.o ppcontrol.o: macro.h
 ppstr.o token.o ppcontrol.o: ppstr.h
 special.o token.o ppcontrol.o: special.h token.h
-ppcontrol.o: ppcontrol.h
+token.o ppcontrol.o lex.o: ppcontrol.h

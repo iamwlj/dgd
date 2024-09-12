@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -43,8 +43,6 @@ int kf_compile_object(Frame *f, int nargs, KFun *kf)
     char file[STRINGSZ];
     Value *v;
     Object *obj;
-    String **strs;
-    int i;
     bool iflag;
 
     UNREFERENCED_PARAMETER(kf);
@@ -65,14 +63,6 @@ int kf_compile_object(Frame *f, int nargs, KFun *kf)
 	    EC->error("Cannot recompile inherited object");
 	}
     }
-    if (--nargs != 0) {
-	strs = ALLOCA(String*, nargs);
-	for (i = nargs, v = f->sp; i > 0; --i) {
-	    *strs++ = (v++)->string;
-	}
-    } else {
-	strs = (String **) NULL;
-    }
     try {
 	EC->push();
 	if (OBJR(f->oindex)->flags & O_DRIVER) {
@@ -85,18 +75,12 @@ int kf_compile_object(Frame *f, int nargs, KFun *kf)
 	} else {
 	    iflag = FALSE;
 	}
-	obj = Compile::compile(f, file, obj, strs, nargs, iflag);
+	obj = Compile::compile(f, file, obj, --nargs, iflag);
 	EC->pop();
     } catch (const char*) {
-	if (nargs != 0) {
-	    AFREE(strs - nargs);
-	}
 	EC->error((char *) NULL);
     }
-    if (nargs != 0) {
-	AFREE(strs - nargs);
-	f->pop(nargs);
-    }
+    f->pop(nargs);
     f->sp->string->del();
     PUT_OBJVAL(f->sp, obj);
 
@@ -159,13 +143,13 @@ int kf_this_object(Frame *f, int n, KFun *kf)
     --f->sp;
     obj = OBJR(f->oindex);
     if (obj->count != 0) {
-	if (f->lwobj == (Array *) NULL) {
+	if (f->lwobj == (LWO *) NULL) {
 	    PUT_OBJVAL(f->sp, obj);
 	} else {
 	    PUT_LWOVAL(f->sp, f->lwobj);
 	}
     } else {
-	*f->sp = Value::nil;
+	*f->sp = nil;
     }
     return 0;
 }
@@ -189,7 +173,7 @@ int kf_previous_object(Frame *f, int nargs, KFun *kf)
     UNREFERENCED_PARAMETER(kf);
 
     if (nargs == 0) {
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
     } else if (f->sp->number < 0) {
 	return 1;
     }
@@ -198,7 +182,7 @@ int kf_previous_object(Frame *f, int nargs, KFun *kf)
     if (prev != (Frame *) NULL) {
 	obj = OBJR(prev->oindex);
 	if (obj->count != 0) {
-	    if (prev->lwobj == (Array *) NULL) {
+	    if (prev->lwobj == (LWO *) NULL) {
 		PUT_OBJVAL(f->sp, obj);
 	    } else {
 		PUT_LWOVAL(f->sp, prev->lwobj);
@@ -207,7 +191,7 @@ int kf_previous_object(Frame *f, int nargs, KFun *kf)
 	}
     }
 
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -230,7 +214,7 @@ int kf_previous_program(Frame *f, int nargs, KFun *kf)
     UNREFERENCED_PARAMETER(kf);
 
     if (nargs == 0) {
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
     } else if (f->sp->number < 0) {
 	return 1;
     }
@@ -242,7 +226,7 @@ int kf_previous_program(Frame *f, int nargs, KFun *kf)
 	str->text[0] = '/';
 	strcpy(str->text + 1, prog);
     } else {
-	*f->sp = Value::nil;
+	*f->sp = nil;
     }
     return 0;
 }
@@ -274,7 +258,7 @@ int kf_clone_object(Frame *f, int n, KFun *kf)
     }
     obj = obj->clone();
     PUT_OBJ(f->sp, obj);
-    if (f->call(obj, (Array *) NULL, (char *) NULL, 0, TRUE, 0)) {
+    if (f->call(obj, (LWO *) NULL, (char *) NULL, 0, TRUE, 0)) {
 	(f->sp++)->del();
     }
     return 0;
@@ -343,7 +327,8 @@ int kf_new_object(Frame *f, int n, KFun *kf)
 	}
 
 	PUT_LWOVAL(f->sp, LWO::create(f->data, obj));
-	if (f->call((Object *) NULL, f->sp->array, (char *) NULL, 0, TRUE, 0)) {
+	if (f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp->array),
+		    (char *) NULL, 0, TRUE, 0)) {
 	    (f->sp++)->del();
 	}
     } else {
@@ -386,7 +371,7 @@ int kf_instanceof(Frame *f, int nargs, KFun *kf)
 	oindex = f->sp[1].array->elts[0].oindex;
 	f->sp[1].array->del();
     }
-    if (f->lwobj == (Array *) NULL) {
+    if (f->lwobj == (LWO *) NULL) {
 	name = OBJR(f->oindex)->objName(buffer);
 	PUT_STRVAL(f->sp + 1,
 		   str = String::create((char *) NULL, strlen(name) + 1L));
@@ -482,7 +467,7 @@ int kf_find_object(Frame *f, int n, KFun *kf)
     if (PM->string(path, f->sp->string->text,
 		   f->sp->string->len) == (char *) NULL) {
 	f->sp->string->del();
-	*f->sp = Value::nil;
+	*f->sp = nil;
 	return 0;
     }
     f->addTicks(2);
@@ -491,7 +476,7 @@ int kf_find_object(Frame *f, int n, KFun *kf)
     if (obj != (Object *) NULL) {
 	PUT_OBJVAL(f->sp, obj);
     } else {
-	*f->sp = Value::nil;
+	*f->sp = nil;
     }
     return 0;
 }
@@ -521,7 +506,7 @@ int kf_function_object(Frame *f, int nargs, KFun *kf)
     f->addTicks(2);
     if (f->sp->type == T_OBJECT) {
 	obj = OBJR(f->sp->oindex);
-	callable = (f->oindex == obj->index && f->lwobj == (Array *) NULL);
+	callable = (f->oindex == obj->index && f->lwobj == (LWO *) NULL);
     } else if (f->sp->array->elts[0].type == T_OBJECT) {
 	n = f->sp->array->elts[0].oindex;
 	callable = (f->lwobj == f->sp->array);
@@ -531,7 +516,7 @@ int kf_function_object(Frame *f, int nargs, KFun *kf)
 	/* no user-probeable functions within (right?) */
 	(f->sp++)->array->del();
 	f->sp->string->del();
-	*f->sp = Value::nil;
+	*f->sp = nil;
 	return 0;
     }
     f->sp++;
@@ -555,7 +540,7 @@ int kf_function_object(Frame *f, int nargs, KFun *kf)
 	    return 0;
 	}
     }
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -580,7 +565,7 @@ int kf_this_user(Frame *f, int n, KFun *kf)
     if (obj != (Object *) NULL) {
 	PUSH_OBJVAL(f, obj);
     } else {
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
     }
     return 0;
 }
@@ -613,7 +598,7 @@ int kf_query_ip_number(Frame *f, int n, KFun *kf)
 	f->sp->array->del();
     }
 
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -645,7 +630,7 @@ int kf_query_ip_name(Frame *f, int n, KFun *kf)
 	f->sp->array->del();
     }
 
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -666,29 +651,6 @@ int kf_users(Frame *f, int n, KFun *kf)
 
     PUSH_ARRVAL(f, Comm::listUsers(f->data));
     f->addTicks(f->sp->array->size);
-    return 0;
-}
-# endif
-
-
-# ifdef FUNCDEF
-FUNCDEF("strlen", kf_strlen, pt_strlen, 0)
-# else
-char pt_strlen[] = { C_TYPECHECKED | C_STATIC, 1, 0, 0, 7, T_INT, T_STRING };
-
-/*
- * return the length of a string
- */
-int kf_strlen(Frame *f, int n, KFun *kf)
-{
-    ssizet len;
-
-    UNREFERENCED_PARAMETER(n);
-    UNREFERENCED_PARAMETER(kf);
-
-    len = f->sp->string->len;
-    f->sp->string->del();
-    PUT_INTVAL(f->sp, len);
     return 0;
 }
 # endif
@@ -717,7 +679,7 @@ int kf_allocate(Frame *f, int n, KFun *kf)
     f->addTicks(f->sp->number);
     PUT_ARRVAL(f->sp, Array::create(f->data, f->sp->number));
     for (i = f->sp->array->size, v = f->sp->array->elts; i > 0; --i, v++) {
-	*v = Value::nil;
+	*v = nil;
     }
     return 0;
 }
@@ -747,7 +709,7 @@ int kf_allocate_int(Frame *f, int n, KFun *kf)
     f->addTicks(f->sp->number);
     PUT_ARRVAL(f->sp, Array::create(f->data, f->sp->number));
     for (i = f->sp->array->size, v = f->sp->array->elts; i > 0; --i, v++) {
-	*v = Value::zeroInt;
+	*v = zeroInt;
     }
     return 0;
 }
@@ -777,7 +739,7 @@ int kf_allocate_float(Frame *f, int n, KFun *kf)
     f->addTicks(f->sp->number);
     PUT_ARRVAL(f->sp, Array::create(f->data, f->sp->number));
     for (i = f->sp->array->size, v = f->sp->array->elts; i > 0; --i, v++) {
-	*v = Value::zeroFloat;
+	*v = zeroFloat;
     }
     return 0;
 }
@@ -943,7 +905,7 @@ int kf_send_message(Frame *f, int n, KFun *kf)
     }
 
     num = 0;
-    if (f->lwobj == (Array *) NULL) {
+    if (f->lwobj == (LWO *) NULL) {
 	obj = OBJR(f->oindex);
 	if (obj->count != 0) {
 	    if ((obj->flags & O_SPECIAL) == O_USER) {
@@ -966,6 +928,7 @@ int kf_send_message(Frame *f, int n, KFun *kf)
 }
 # endif
 
+
 # ifdef FUNCDEF
 FUNCDEF("send_datagram", kf_send_datagram, pt_send_datagram, 0)
 # else
@@ -984,7 +947,7 @@ int kf_send_datagram(Frame *f, int n, KFun *kf)
     UNREFERENCED_PARAMETER(kf);
 
     num = 0;
-    if (f->lwobj == (Array *) NULL) {
+    if (f->lwobj == (LWO *) NULL) {
 	obj = OBJW(f->oindex);
 	if ((obj->flags & O_SPECIAL) == O_USER && obj->count != 0) {
 	    num = Comm::udpsend(obj, f->sp->string);
@@ -992,6 +955,33 @@ int kf_send_datagram(Frame *f, int n, KFun *kf)
     }
     f->sp->string->del();
     PUT_INTVAL(f->sp, num);
+    return 0;
+}
+# endif
+
+
+# ifdef FUNCDEF
+FUNCDEF("send_close", kf_send_close, pt_send_close, 0)
+# else
+char pt_send_close[] = { C_STATIC, 0, 0, 0, 6, T_VOID };
+
+/*
+ * close output stream
+ */
+int kf_send_close(Frame *f, int n, KFun *kf)
+{
+    Object *obj;
+
+    UNREFERENCED_PARAMETER(n);
+    UNREFERENCED_PARAMETER(kf);
+
+    if (f->lwobj == (LWO *) NULL) {
+	obj = OBJW(f->oindex);
+	if ((obj->flags & O_SPECIAL) == O_USER && obj->count != 0) {
+	    Comm::stop(obj);
+	}
+    }
+    *--f->sp = nil;
     return 0;
 }
 # endif
@@ -1013,14 +1003,14 @@ int kf_datagram_challenge(Frame *f, int n, KFun *kf)
     UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
-    if (f->lwobj == (Array *) NULL) {
+    if (f->lwobj == (LWO *) NULL) {
 	obj = OBJW(f->oindex);
 	if ((obj->flags & O_SPECIAL) == O_USER && obj->count != 0) {
 	    Comm::challenge(obj, f->sp->string);
 	}
     }
     f->sp->string->del();
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -1041,13 +1031,13 @@ int kf_block_input(Frame *f, int n, KFun *kf)
     UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
-    if (f->lwobj == (Array *) NULL) {
+    if (f->lwobj == (LWO *) NULL) {
 	obj = OBJR(f->oindex);
 	if ((obj->flags & O_SPECIAL) == O_USER && obj->count != 0) {
 	    Comm::block(obj, f->sp->number != 0);
 	}
     }
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -1092,8 +1082,8 @@ int kf_millitime(Frame *f, int n, KFun *kf)
     f->addTicks(2);
     a = Array::create(f->data, 2);
     PUT_INTVAL(&a->elts[0], P_mtime(&milli));
-    Float::itof((Int) milli, &flt);
-    flt.mult(thousandth);
+    Float::itof(milli, &flt);
+    flt.div(thousand);
     PUT_FLTVAL(&a->elts[1], flt);
     PUSH_ARRVAL(f, a);
     return 0;
@@ -1112,7 +1102,7 @@ char pt_call_out[] = { C_TYPECHECKED | C_STATIC | C_ELLIPSIS, 2, 1, 0, 9, T_INT,
  */
 int kf_call_out(Frame *f, int nargs, KFun *kf)
 {
-    Int delay;
+    LPCint delay;
     Uint mdelay;
     Float flt1, flt2;
     uindex handle;
@@ -1139,7 +1129,7 @@ int kf_call_out(Frame *f, int nargs, KFun *kf)
     } else {
 	return 2;
     }
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	EC->error("call_out() in non-persistent object");
     }
 
@@ -1173,14 +1163,14 @@ char pt_remove_call_out[] = { C_TYPECHECKED | C_STATIC, 1, 0, 0, 7, T_MIXED,
  */
 int kf_remove_call_out(Frame *f, int n, KFun *kf)
 {
-    Int delay;
+    LPCint delay;
     unsigned short mdelay;
     Float flt1, flt2;
 
     UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	EC->error("remove_call_out() in non-persistent object");
     }
     f->addTicks(10);
@@ -1188,7 +1178,7 @@ int kf_remove_call_out(Frame *f, int n, KFun *kf)
     if (mdelay != TIME_INT) {
 	Float::itof(delay, &flt1);
 	Float::itof(mdelay, &flt2);
-	flt2.mult(thousandth);
+	flt2.div(thousand);
 	flt1.add(flt2);
 	PUT_FLTVAL(f->sp, flt1);
     } else {
@@ -1214,7 +1204,7 @@ int kf_swapout(Frame *f, int n, KFun *kf)
 
     Object::swapout();
 
-    *--f->sp = Value::nil;
+    *--f->sp = nil;
     return 0;
 }
 # endif
@@ -1241,7 +1231,7 @@ int kf_dump_state(Frame *f, int nargs, KFun *kf)
     } else {
 	incr = (f->sp->number != 0);
     }
-    *f->sp = Value::nil;
+    *f->sp = nil;
 
     Object::dumpState(incr);
 
@@ -1271,7 +1261,7 @@ int kf_connect(Frame *f, int nargs, KFun *kf)
 	f->sp->string->del();
 	f->sp++;
     }
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	EC->error("connect() in non-persistent object");
     }
     obj = OBJW(f->oindex);
@@ -1291,7 +1281,7 @@ int kf_connect(Frame *f, int nargs, KFun *kf)
 
     Comm::connect(f, obj, f->sp->string->text, port);
     f->sp->string->del();
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -1333,7 +1323,7 @@ int kf_connect_datagram(Frame *f, int nargs, KFun *kf)
     if (nargs > 3) {
 	(f->sp++)->string->del();
     }
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	EC->error("connect_datagram() in non-persistent object");
     }
     obj = OBJW(f->oindex);
@@ -1353,7 +1343,7 @@ int kf_connect_datagram(Frame *f, int nargs, KFun *kf)
 
     Comm::connectDgram(f, obj, f->sp[1].number, f->sp->string->text, port);
     (f->sp++)->string->del();
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -1385,7 +1375,7 @@ int kf_shutdown(Frame *f, int nargs, KFun *kf)
     }
     Object::finish(boot);
 
-    *--f->sp = Value::nil;
+    *--f->sp = nil;
     return 0;
 }
 # endif
@@ -1425,13 +1415,13 @@ int kf_new_function(Frame *f, int nargs, KFun *kf)
     /* object, function name, arg1, ..., argn */
     obj = OBJR(f->oindex);
     if (obj->count != 0) {
-	if (f->lwobj == (Array *) NULL) {
+	if (f->lwobj == (LWO *) NULL) {
 	    PUT_OBJVAL(&elts[3], obj);
 	} else {
 	    PUT_LWOVAL(&elts[3], f->lwobj);
 	}
     } else {
-	elts[3] = Value::nil;	/* postpone error until function is called */
+	elts[3] = nil;	/* postpone error until function is called */
     }
     v = f->sp;
     elts += a->size;
@@ -1506,9 +1496,10 @@ char pt_call_function[] = { C_STATIC | C_ELLIPSIS, 1, 1, 0, 8, T_MIXED,
  */
 int kf_call_function(Frame *f, int nargs, KFun *kf)
 {
-    Array *a, *lwobj;
+    Array *a;
     Value *elts, *v, *w;
     Object *obj;
+    LWO *lwobj;
     int n;
 
     UNREFERENCED_PARAMETER(kf);
@@ -1531,7 +1522,7 @@ int kf_call_function(Frame *f, int nargs, KFun *kf)
 
     case T_LWOBJECT:
 	obj = NULL;
-	lwobj = elts[3].array;
+	lwobj = dynamic_cast<LWO *> (elts[3].array);
 	v = Dataspace::elts(lwobj);
 	if (v->type == T_OBJECT && DESTRUCTED(v)) {
 	    EC->error("Function in destructed object");
@@ -1580,4 +1571,5 @@ int kf_call_function(Frame *f, int nargs, KFun *kf)
 FUNCDEF("0.call_other", kf_call_other, pt_call_other, 0)
 FUNCDEF("0.call_trace", kf_call_trace, pt_call_trace, 0)
 FUNCDEF("0.status", kf_status, pt_status, 0)
+FUNCDEF("0.strlen", kf_strlen, pt_strlen, 0)
 # endif

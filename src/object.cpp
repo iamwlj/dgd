@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -23,7 +23,7 @@
 # include "str.h"
 # include "array.h"
 # include "object.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "ext.h"
@@ -85,7 +85,7 @@ public:
 class ObjPlane : public Allocated {
 public:
     ObjPlane(ObjPlane *prev) {
-	htab = (Hashtab *) NULL;
+	htab = (Hash::Hashtab *) NULL;
 	optab = (ObjPatchTable *) NULL;
 
 	if (prev != (ObjPlane *) NULL) {
@@ -115,7 +115,7 @@ public:
 		prev->htab = htab;
 		prev->optab = optab;
 	    } else {
-		if (htab != (Hashtab *) NULL) {
+		if (htab != (Hash::Hashtab *) NULL) {
 		    delete htab;
 		}
 		delete optab;
@@ -141,7 +141,7 @@ public:
 	prev->boot = boot;
     }
 
-    Hashtab *htab;		/* object name hash table */
+    Hash::Hashtab *htab;	/* object name hash table */
     ObjPatchTable *optab;	/* object patch table */
     uintptr_t clean;		/* list of objects to clean */
     uintptr_t upgrade;		/* list of upgrade objects */
@@ -154,26 +154,25 @@ public:
     ObjPlane *prev;		/* previous object plane */
 };
 
-Object *Object::objTable;	/* object table */
-Uint *Object::ocmap;		/* object change map */
-bool Object::base;		/* object base plane flag */
-bool Object::swap, Object::dump, Object::incr, Object::stop, Object::boot;
-				/* global state vars */
-bool Object::rcount;		/* object counts recalculated? */
-uindex Object::otabsize;	/* size of object table */
-uindex Object::uobjects;	/* objects to check for upgrades */
+Object *objTable;		/* object table */
+Uint *ocmap;			/* object change map */
+bool obase;			/* object base plane flag */
+bool swap, dump, incr, stop, boot; /* global state vars */
+static bool rcount;		/* object counts recalculated? */
+static uindex otabsize;		/* size of object table */
+static uindex uobjects;		/* objects to check for upgrades */
 static ObjPlane baseplane(NULL);/* base object plane */
 static ObjPlane *oplane;	/* current object plane */
-Uint *Object::omap;		/* object dump bitmap */
-Uint *Object::counttab;		/* object count table */
-Uint *Object::insttab;		/* object instance table */
-Object *Object::upgradeList;	/* list of upgraded objects */
-uindex Object::ndobject, Object::dobject; /* objects to copy */
-uindex Object::mobjects;	/* max objects to copy */
-uindex Object::dchunksz;	/* copy chunk size */
-Uint Object::dinterval;		/* copy interval */
-Uint Object::dtime;		/* time copying started */
-Uint Object::objDestrCount;	/* objects destructed count */
+static Uint *omap;		/* object dump bitmap */
+static Uint *counttab;		/* object count table */
+static Uint *insttab;		/* object instance table */
+static Object *upgradeList;	/* list of upgraded objects */
+static uindex ndobject, dobject;/* objects to copy */
+static uindex mobjects;		/* max objects to copy */
+static uindex dchunksz;		/* copy chunk size */
+static Uint dinterval;		/* copy interval */
+static Uint dtime;		/* time copying started */
+Uint objDestrCount;		/* objects destructed count */
 
 /*
  * initialize the object tables
@@ -185,7 +184,7 @@ void Object::init(unsigned int n, Uint interval)
     ocmap = ALLOC(Uint, BMAP(n));
     memset(ocmap, '\0', BMAP(n) * sizeof(Uint));
     for (n = 4; n < otabsize; n <<= 1) ;
-    baseplane.htab = Hashtab::create(n >> 2, OBJHASHSZ, FALSE);
+    baseplane.htab = HM->create(n >> 2, OBJHASHSZ, FALSE);
     baseplane.upgrade = baseplane.clean = OBJ_NONE;
     baseplane.destruct = baseplane.free = OBJ_NONE;
     baseplane.nobjects = 0;
@@ -205,7 +204,7 @@ void Object::init(unsigned int n, Uint interval)
     uobjects = ndobject = mobjects = 0;
     dinterval = ((interval + 1) * 19) / 20;
     objDestrCount = 1;
-    base = TRUE;
+    obase = TRUE;
     rcount = TRUE;
 }
 
@@ -235,15 +234,14 @@ Object *Object::access(unsigned int index, int access)
 	obj = &oplane->optab->addPatch(index, oplane)->obj;
 	if (obj->name != (char *) NULL) {
 	    char *name;
-	    Hashtab::Entry **h;
+	    Hash::Entry **h;
 
 	    /* copy object name to higher plane */
 	    strcpy(name = ALLOC(char, strlen(obj->name) + 1), obj->name);
 	    obj->name = name;
 	    if (obj->count != 0) {
-		if (oplane->htab == (Hashtab *) NULL) {
-		    oplane->htab = Hashtab::create(OBJPATCHHTABSZ, OBJHASHSZ,
-						   FALSE);
+		if (oplane->htab == (Hash::Hashtab *) NULL) {
+		    oplane->htab = HM->create(OBJPATCHHTABSZ, OBJHASHSZ, FALSE);
 		}
 		h = oplane->htab->lookup(name, FALSE);
 		obj->next = *h;
@@ -303,7 +301,7 @@ Object *Object::alloc()
 void Object::newPlane()
 {
     oplane = new ObjPlane(oplane);
-    base = FALSE;
+    obase = FALSE;
 }
 
 /*
@@ -337,7 +335,7 @@ void Object::commitPlane()
 		     * commit to base plane
 		     */
 		    if (op->obj.name != (char *) NULL) {
-			Hashtab::Entry **h;
+			Hash::Entry **h;
 
 			if (obj->name == (char *) NULL) {
 			    char *name;
@@ -416,7 +414,7 @@ void Object::commitPlane()
     delete oplane;
     oplane = prev;
 
-    base = (prev == &baseplane);
+    obase = (prev == &baseplane);
 }
 
 /*
@@ -454,7 +452,7 @@ void Object::discardPlane()
 			}
 			FREE(op->obj.name);
 		    } else {
-			Hashtab::Entry **h;
+			Hash::Entry **h;
 
 			if (op->obj.count != 0) {
 			    /*
@@ -520,7 +518,7 @@ void Object::discardPlane()
     oplane = p->prev;
     delete p;
 
-    base = (oplane == &baseplane);
+    obase = (oplane == &baseplane);
 }
 
 
@@ -532,20 +530,20 @@ Object *Object::create(char *name, Control *ctrl)
     Object *o;
     Inherit *inh;
     int i;
-    Hashtab::Entry **h;
+    Hash::Entry **h;
 
     /* allocate object */
     o = alloc();
 
     /* put object in object name hash table */
-    if (base) {
+    if (obase) {
 	MM->staticMode();
     }
     o->name = strcpy(ALLOC(char, strlen(name) + 1), name);
-    if (base) {
+    if (obase) {
 	MM->dynamicMode();
-    } else if (oplane->htab == (Hashtab *) NULL) {
-	oplane->htab = Hashtab::create(OBJPATCHHTABSZ, OBJHASHSZ, FALSE);
+    } else if (oplane->htab == (Hash::Hashtab *) NULL) {
+	oplane->htab = HM->create(OBJPATCHHTABSZ, OBJHASHSZ, FALSE);
     }
     h = oplane->htab->lookup(name, FALSE);
     o->next = *h;
@@ -657,7 +655,7 @@ void Object::upgrade(Control *ctrl, Frame *f)
     }
 
     /* add to upgrades list */
-    obj->next = (Hashtab::Entry *) oplane->upgrade;
+    obj->next = (Hash::Entry *) oplane->upgrade;
     oplane->upgrade = obj->index;
 
     /* mark as upgrading */
@@ -729,7 +727,7 @@ void Object::del(Frame *f)
     }
 
     /* put in clean list */
-    next = (Hashtab::Entry *) oplane->clean;
+    next = (Hash::Entry *) oplane->clean;
     oplane->clean = index;
 }
 
@@ -767,7 +765,7 @@ const char *Object::objName(char *name)
 /*
  * return the base name of a builtin type
  */
-const char *Object::builtinName(Int type)
+const char *Object::builtinName(LPCint type)
 {
     /*
      * builtin types have names like: /builtin/type#-1
@@ -836,7 +834,7 @@ Object *Object::find(char *name, int access)
 	}
     } else {
 	/* look it up in the hash table */
-	if (oplane->htab == (Hashtab *) NULL ||
+	if (oplane->htab == (Hash::Hashtab *) NULL ||
 	    (o = (Object *) *oplane->htab->lookup(name, TRUE)) ==
 							    (Object *) NULL) {
 	    if (oplane != &baseplane) {
@@ -1349,7 +1347,7 @@ void Object::restore(int fd, bool part)
 	    MM->dynamicMode();
 
 	    if (o->count != 0) {
-		Hashtab::Entry **h;
+		Hash::Entry **h;
 
 		/* add name to lookup table */
 		h = baseplane.htab->lookup(p, FALSE);

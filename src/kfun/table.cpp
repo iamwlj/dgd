@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -52,6 +52,7 @@ KFun kfhsh[KFCRYPT_SIZE];	/* hashing */
 kfindex kfind[KFTAB_SIZE];	/* n -> index */
 static kfindex kfx[KFTAB_SIZE];	/* index -> n */
 int nkfun, ne, nd, nh;		/* # kfuns */
+static int okfun, oe, od, oh;	/* # original kfuns */
 
 extern void kf_enc(Frame *, int, Value *);
 extern void kf_enc_key(Frame *, int, Value *);
@@ -74,7 +75,8 @@ void KFun::argError(int n)
  */
 void KFun::unary(Frame *f)
 {
-    if (!f->call((Object *) NULL, f->sp->array, name, strlen(name), TRUE, 0)) {
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp->array), name,
+		 strlen(name), TRUE, 0)) {
 	argError(1);
     }
     if (f->sp->type != T_LWOBJECT || f->sp->array->elts[0].type != T_OBJECT) {
@@ -95,7 +97,8 @@ void KFun::binary(Frame *f)
 	argError(2);
     }
 
-    if (!f->call((Object *) NULL, f->sp[1].array, name, strlen(name), TRUE, 1))
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp[1].array), name,
+		 strlen(name), TRUE, 1))
     {
 	argError(1);
     }
@@ -117,7 +120,8 @@ void KFun::compare(Frame *f)
 	argError(2);
     }
 
-    if (!f->call((Object *) NULL, f->sp[1].array, name, strlen(name), TRUE, 1))
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp[1].array), name,
+		 strlen(name), TRUE, 1))
     {
 	argError(1);
     }
@@ -135,7 +139,8 @@ void KFun::compare(Frame *f)
  */
 void KFun::ternary(Frame *f)
 {
-    if (!f->call((Object *) NULL, f->sp[2].array, name, strlen(name), TRUE, 2))
+    if (!f->call((Object *) NULL, dynamic_cast<LWO *> (f->sp[2].array), name,
+		 strlen(name), TRUE, 2))
     {
 	argError(1);
     }
@@ -165,8 +170,14 @@ void KFun::clear()
     };
 
     nkfun = sizeof(kforig) / sizeof(KFun);
-    ne = nd = nh = 0;
+    oe = ne = od = nd = oh = nh = 0;
     add(builtin, 7);
+
+    init();
+    okfun = nkfun;
+    oe = ne;
+    od = nd;
+    oh = nh;
 }
 
 /*
@@ -177,7 +188,7 @@ int KFun::callgate(Frame *f, int nargs, KFun *kf)
     if (!setjmp(*EC->push())) {
 	Value val;
 
-	val = Value::nil;
+	val = nil;
 	(kf->ext)(f, nargs, &val);
 	val.ref();
 	f->pop(nargs);
@@ -271,19 +282,19 @@ char *KFun::prototype(char *proto, bool *lval)
 /*
  * possibly replace an existing algorithmic kfun
  */
-KFun *KFun::replace(KFun *table, int *size, const char *name)
+KFun *KFun::replace(KFun *table, int from, int to, int *size, const char *name)
 {
     int i;
     KFun *kf;
 
-    for (i = *size, kf = &table[i]; i != 0; --i) {
-	if (strcmp((--kf)->name, name) == 0) {
-	    return kf;
-	}
+    i = find(table, from, to, name);
+    if (i >= 0) {
+	return &table[i];
     }
 
     kf = &table[(*size)++];
     kf->name = name;
+    kf->version = 0;
     return kf;
 }
 
@@ -296,20 +307,18 @@ void KFun::add(const ExtKFun *kfadd, int n)
 
     for (; n != 0; kfadd++, --n) {
 	if (strncmp(kfadd->name, "encrypt ", 8) == 0) {
-	    kf = replace(kfenc, &ne, kfadd->name + 8);
+	    kf = replace(kfenc, 0, oe, &ne, kfadd->name + 8);
 	} else if (strncmp(kfadd->name, "decrypt ", 8) == 0) {
-	    kf = replace(kfdec, &nd, kfadd->name + 8);
+	    kf = replace(kfdec, 0, od, &nd, kfadd->name + 8);
 	} else if (strncmp(kfadd->name, "hash ", 5) == 0) {
-	    kf = replace(kfhsh, &nh, kfadd->name + 5);
+	    kf = replace(kfhsh, 0, oh, &nh, kfadd->name + 5);
 	} else {
-	    kf = &kftab[nkfun++];
-	    kf->name = kfadd->name;
+	    kf = replace(kftab, KF_BUILTINS, okfun, &nkfun, kfadd->name);
 	}
 	kf->lval = FALSE;
 	kf->proto = prototype(kfadd->proto, &kf->lval);
 	kf->func = &callgate;
 	kf->ext = kfadd->func;
-	kf->version = 0;
     }
 }
 
@@ -354,7 +363,7 @@ void KFun::init()
  */
 void KFun::jit()
 {
-    int size, i, n, nkf;
+    int size, i, nkf;
     char *protos, *proto;
 
     for (size = 0, i = 0; i < KF_BUILTINS; i++) {
@@ -375,13 +384,10 @@ void KFun::jit()
 	memcpy(protos, proto, PROTO_SIZE(proto));
 	protos += PROTO_SIZE(proto);
     }
-    for (; i < nkfun; i++) {
-	n = kfind[i + 128 - KF_BUILTINS];
-	if (kfx[n] != 0) {
-	    proto = kftab[n].proto;
-	    memcpy(protos, proto, PROTO_SIZE(proto));
-	    protos += PROTO_SIZE(proto);
-	}
+    for (i = 0; i < nkf; i++) {
+	proto = kftab[kfind[i + 128]].proto;
+	memcpy(protos, proto, PROTO_SIZE(proto));
+	protos += PROTO_SIZE(proto);
     }
 
     protos -= size;
@@ -397,7 +403,7 @@ int KFun::find(KFun *kf, unsigned int l, unsigned int h, const char *name)
     unsigned int m;
     int c;
 
-    do {
+    while (l < h) {
 	c = strcmp(name, kf[m = (l + h) >> 1].name);
 	if (c == 0) {
 	    return m;	/* found */
@@ -406,7 +412,7 @@ int KFun::find(KFun *kf, unsigned int l, unsigned int h, const char *name)
 	} else {
 	    l = m + 1;	/* search in upper half */
 	}
-    } while (l < h);
+    }
     /*
      * not found
      */
@@ -428,8 +434,13 @@ int KFun::kfunc(const char *name)
 	if (strcmp(name, "call_other") == 0) {
 	    return KF_CALL_OTHER;
 	}
-    } else if (strcmp(name, "status") == 0) {
-	return KF_STATUS;
+    } else {
+	n = strcmp(name, "strlen");
+	if (n == 0) {
+	    return KF_STRLEN;
+	} else if (n < 0 && strcmp(name, "status") == 0) {
+	    return KF_STATUS;
+	}
     }
 
     n = find(kftab, KF_BUILTINS, nkfun, name);

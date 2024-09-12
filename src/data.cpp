@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,23 +22,24 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
+# include "ext.h"
 # include "call_out.h"
 # include "parse.h"
 
 
-Value Value::zeroInt = { T_INT, TRUE };
-Value Value::zeroFloat = { T_FLOAT, TRUE };
-Value Value::nil = { T_NIL, TRUE };
+Value zeroInt = { T_INT, TRUE };
+Value zeroFloat = { T_FLOAT, TRUE };
+Value nil = { T_NIL, TRUE };
 
 /*
  * initialize nil value
  */
 void Value::init(bool stricttc)
 {
-    Value::nil.type = (stricttc) ? T_NIL : T_INT;
+    nil.type = (stricttc) ? T_NIL : T_INT;
 }
 
 /*
@@ -92,7 +93,7 @@ void Value::copy(Value *v, Value *w, unsigned int len)
 
 	case T_OBJECT:
 	    if (DESTRUCTED(w)) {
-		*v++ = Value::nil;
+		*v++ = nil;
 		w++;
 		continue;
 	    }
@@ -101,7 +102,7 @@ void Value::copy(Value *v, Value *w, unsigned int len)
 	case T_LWOBJECT:
 	    o = Dataspace::elts(w->array);
 	    if (o->type == T_OBJECT && DESTRUCTED(o)) {
-		*v++ = Value::nil;
+		*v++ = nil;
 		w++;
 		continue;
 	    }
@@ -271,7 +272,7 @@ public:
      * create new callout patch
      */
     COPatch *patch(Dataplane *plane, COPatch **c, int type, unsigned int handle,
-	       DCallOut *co, Uint time, unsigned int mtime, uindex *q) {
+		   DCallOut *co, Uint time, unsigned int mtime, uindex *q) {
 	/* allocate */
 	return chunknew (chunk) COPatch(plane, c, type, handle, co, time, mtime,
 					q);
@@ -311,7 +312,7 @@ Dataplane::Dataplane(Dataspace *data)
 /*
  * create a new dataplane
  */
-Dataplane::Dataplane(Dataspace *data, Int level) : level(level)
+Dataplane::Dataplane(Dataspace *data, LPCint level) : level(level)
 {
     Uint i;
 
@@ -372,7 +373,7 @@ Dataplane::Dataplane(Dataspace *data, Int level) : level(level)
 /*
  * commit non-swapped arrays among the values
  */
-void Dataplane::commitValues(Value *v, unsigned int n, Int level)
+void Dataplane::commitValues(Value *v, unsigned int n, LPCint level)
 {
     Array *list, *arr;
 
@@ -541,7 +542,7 @@ void Dataplane::commitCallouts(bool merge)
 /*
  * commit the current data planes
  */
-void Dataplane::commit(Int level, Value *retval)
+void Dataplane::commit(LPCint level, Value *retval)
 {
     Dataplane *p, *commit, **r, **cr;
     Dataspace *data;
@@ -710,7 +711,7 @@ void Dataplane::discardCallouts()
 /*
  * discard the current data plane without committing it
  */
-void Dataplane::discard(Int level)
+void Dataplane::discard(LPCint level)
 {
     Dataplane *p;
     Dataspace *data;
@@ -1167,14 +1168,14 @@ struct SValue {
     char pad;			/* 0 */
     uindex oindex;		/* index in object table */
     union {
-	Int number;		/* number */
-	Uint string;		/* string */
-	Uint objcnt;		/* object creation count */
-	Uint array;		/* array */
+	LPCint number;		/* number */
+	LPCuint string;		/* string */
+	LPCuint objcnt;		/* object creation count */
+	LPCuint array;		/* array */
     };
 };
 
-static char sv_layout[] = "ccui";
+static char sv_layout[] = "ccuI";
 
 struct SArray {
     Uint tag;			/* unique value for each array */
@@ -1216,7 +1217,7 @@ struct SCallOut {
     SValue val[4];		/* function name, 3 direct arguments */
 };
 
-static char sco_layout[] = "lu[ccui][ccui][ccui][ccui]";
+static char sco_layout[] = "lu[ccuI][ccuI][ccuI][ccuI]";
 
 struct SCallOut0 {
     Uint time;			/* time of call */
@@ -1226,13 +1227,14 @@ struct SCallOut0 {
     SValue val[4];		/* function name, 3 direct arguments */
 };
 
-static char sco0_layout[] = "issu[ccui][ccui][ccui][ccui]";
+static char sco0_layout[] = "issu[ccuI][ccuI][ccuI][ccuI]";
 
 # define co_prev	time
 # define co_next	nargs
 
 static bool conv_14;			/* convert arrays & strings? */
 static bool conv_16;			/* convert callouts? */
+static bool conv_float;			/* convert floats? */
 static bool convDone;			/* conversion complete? */
 
 /*
@@ -1374,6 +1376,47 @@ void Dataspace::convSCallOut0(SCallOut *sco, Sector *s, Uint n, Uint offset,
     FREE(sco0 - n);
 }
 
+# ifdef LARGENUM
+/*
+ * expand floating point values
+ */
+void Dataspace::expandValues(SValue *v, Uint n)
+{
+    Float flt;
+
+    while (n != 0) {
+	if (v->type == T_FLOAT && v->oindex > TRUE) {
+	    Ext::largeFloat(&flt, v->oindex, v->objcnt);
+	    v->oindex = flt.high;
+	    v->objcnt = flt.low;
+	}
+	v++;
+	--n;
+    }
+}
+
+/*
+ * expand floats in dataspace
+ */
+void Dataspace::expand()
+{
+    SCallOut *co;
+    uindex i;
+
+    expandValues(svariables, nvariables);
+    expandValues(selts, eltsize);
+    for (co = scallouts, i = ncallouts; i > 0; co++, --i) {
+	if (co->val[0].type == T_STRING) {
+	    if (co->nargs > 3) {
+		expandValues(co->val, 4);
+	    } else {
+		expandValues(co->val, co->nargs + 1);
+	    }
+	}
+    }
+}
+# endif
+
 /*
  * convert dataspace
  */
@@ -1470,6 +1513,12 @@ Dataspace *Dataspace::conv(Object *obj, Uint *counttab,
 	}
     }
 
+# ifdef LARGENUM
+    if (conv_float) {
+	data->expand();
+    }
+# endif
+
     data->ctrl = obj->control();
     data->ctrl->ndata++;
 
@@ -1490,7 +1539,7 @@ void Dataspace::loadStrings(void (*readv) (char*, Sector*, Uint, Uint))
 	    /* load strings text */
 	    if (flags & DATA_STRCMP) {
 		stext = Swap::decompress(sectors, readv, strsize,
-				         stroffset + nstrings * sizeof(SString),
+					 stroffset + nstrings * sizeof(SString),
 					 &strsize);
 	    } else {
 		stext = ALLOC(char, strsize);
@@ -1684,7 +1733,7 @@ void Dataspace::newVars(Control *ctrl, Value *val)
 	if (T_ARITHMETIC(var->type)) {
 	    val->type = var->type;
 	} else {
-	    val->type = Value::nil.type;
+	    val->type = nil.type;
 	}
 	val++;
     }
@@ -1711,7 +1760,7 @@ Value *Dataspace::variable(unsigned int idx)
 	if (nsectors == 0 && svariables == (SValue *) NULL) {
 	    /* new datablock */
 	    newVars(ctrl, variables);
-	    variables[nvariables - 1] = Value::nil;	/* extra var */
+	    variables[nvariables - 1] = nil;	/* extra var */
 	} else {
 	    /*
 	     * variables must be loaded from swap
@@ -1809,7 +1858,7 @@ void Dataspace::loadCallouts()
 	    loadValues(sco->val, co->val,
 		       (sco->nargs > 3) ? 4 : sco->nargs + 1);
 	} else {
-	    co->val[0] = Value::nil;
+	    co->val[0] = nil;
 	}
 	sco++;
 	co++;
@@ -1869,7 +1918,8 @@ public:
 		    if (v->array->put(narr) == narr) {
 			if (elts->objcnt == count &&
 			    elts[1].objcnt != obj->update) {
-			    Dataspace::upgradeLWO(v->array, obj);
+			    Dataspace::upgradeLWO(dynamic_cast<LWO *>(v->array),
+						  obj);
 			}
 			arrCount(v->array);
 		    }
@@ -2637,7 +2687,7 @@ void Dataspace::setExtra(Dataspace *data, Value *val)
  */
 void Dataspace::wipeExtra(Dataspace *data)
 {
-    data->assignVar(data->variable(data->nvariables - 1), &Value::nil);
+    data->assignVar(data->variable(data->nvariables - 1), &nil);
 
     if (data->parser != (Parser *) NULL) {
 	/*
@@ -2715,7 +2765,7 @@ void Dataspace::assignElt(Array *arr, Value *elt, Value *val)
 /*
  * mark a mapping as changed in size
  */
-void Dataspace::changeMap(Array *map)
+void Dataspace::changeMap(Mapping *map)
 {
     ArrRef *a;
 
@@ -2843,7 +2893,7 @@ void Dataspace::freeCallOut(unsigned int handle)
 	v[0].string->del();
 	break;
     }
-    v[0] = Value::nil;
+    v[0] = nil;
 
     n = fcallouts;
     if (n != 0) {
@@ -2858,7 +2908,7 @@ void Dataspace::freeCallOut(unsigned int handle)
 /*
  * add a new callout
  */
-uindex Dataspace::newCallOut(String *func, Int delay, unsigned int mdelay,
+uindex Dataspace::newCallOut(String *func, LPCint delay, unsigned int mdelay,
 			     Frame *f, int nargs)
 {
     Uint ct, t;
@@ -2939,10 +2989,10 @@ uindex Dataspace::newCallOut(String *func, Int delay, unsigned int mdelay,
 /*
  * remove a callout
  */
-Int Dataspace::delCallOut(Uint handle, unsigned short *mtime)
+LPCint Dataspace::delCallOut(Uint handle, unsigned short *mtime)
 {
     DCallOut *co;
-    Int t;
+    LPCint t;
 
     *mtime = TIME_INT;
     if (handle == 0 || handle > ncallouts) {
@@ -3059,7 +3109,7 @@ String *Dataspace::callOut(unsigned int handle, Frame *f, int *nargs)
 	switch (v->type) {
 	case T_OBJECT:
 	    if (DESTRUCTED(v)) {
-		*v = Value::nil;
+		*v = nil;
 	    }
 	    break;
 
@@ -3067,13 +3117,13 @@ String *Dataspace::callOut(unsigned int handle, Frame *f, int *nargs)
 	    o = Dataspace::elts(v->array);
 	    if (o->type == T_OBJECT && DESTRUCTED(o)) {
 		v->array->del();
-		*v = Value::nil;
+		*v = nil;
 	    }
 	    break;
 	}
     }
 
-    co->val[0] = Value::nil;
+    co->val[0] = nil;
     n = fcallouts;
     if (n != 0) {
 	callouts[n - 1].co_prev = handle;
@@ -3237,15 +3287,15 @@ void Dataspace::upgrade(unsigned int nvar, unsigned short *vmap, Object *tmpl)
     for (n = nvar, v = ALLOC(Value, n); n > 0; --n) {
 	switch (*vmap) {
 	case NEW_INT:
-	    *v++ = Value::zeroInt;
+	    *v++ = zeroInt;
 	    break;
 
 	case NEW_FLOAT:
-	    *v++ = Value::zeroFloat;
+	    *v++ = zeroFloat;
 	    break;
 
 	case NEW_POINTER:
-	    *v++ = Value::nil;
+	    *v++ = nil;
 	    break;
 
 	default:
@@ -3308,7 +3358,7 @@ void Dataspace::upgradeClone()
 /*
  * upgrade a non-persistent object
  */
-Object *Dataspace::upgradeLWO(Array *lwobj, Object *obj)
+Object *Dataspace::upgradeLWO(LWO *lwobj, Object *obj)
 {
     ArrRef *a;
     unsigned short n;
@@ -3332,15 +3382,15 @@ Object *Dataspace::upgradeLWO(Array *lwobj, Object *obj)
     for (n = nvar; n > 0; --n) {
 	switch (*vmap) {
 	case NEW_INT:
-	    *v++ = Value::zeroInt;
+	    *v++ = zeroInt;
 	    break;
 
 	case NEW_FLOAT:
-	    *v++ = Value::zeroFloat;
+	    *v++ = zeroFloat;
 	    break;
 
 	case NEW_POINTER:
-	    *v++ = Value::nil;
+	    *v++ = nil;
 	    break;
 
 	default:
@@ -3616,10 +3666,11 @@ void Dataspace::init()
 /*
  * prepare for conversions
  */
-void Dataspace::initConv(bool c14, bool c16)
+void Dataspace::initConv(bool c14, bool c16, bool cfloat)
 {
     conv_14 = c14;
     conv_16 = c16;
+    conv_float = cfloat;
 }
 
 /*

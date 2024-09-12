@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -87,7 +87,8 @@ static IFState top;		/* initial ifstate */
  * initialize preprocessor. Return TRUE if the input file could
  * be opened.
  */
-bool PP::init(char *file, char **id, String **strs, int nstr, int level)
+bool Preproc::init(char *file, char **id, char *buffer, unsigned int buflen,
+		   int level)
 {
     top.active = TRUE;
     top.skipping = FALSE;
@@ -96,15 +97,13 @@ bool PP::init(char *file, char **id, String **strs, int nstr, int level)
     top.prev = (IFState *) NULL;
 
     TokenBuf::init();
-    if (strs != (String **) NULL) {
-	TokenBuf::include(file, strs, nstr);
-    } else if (!TokenBuf::include(file, (String **) NULL, 0)) {
+    if (!include(file, buffer, buflen)) {
 	TokenBuf::clear();
 	return FALSE;
     }
     Macro::init();
     Special::define();
-    Macro::define("__DGD__", "\x0091\x009", -1);	/* HT 1 HT */
+    Macro::define("__DGD__", "\0111\011", -1);	/* HT 1 HT */
     include_level = level;
     ifs = &top;
 
@@ -142,7 +141,7 @@ bool PP::init(char *file, char **id, String **strs, int nstr, int level)
 /*
  * terminate preprocessor
  */
-void PP::clear()
+void Preproc::clear()
 {
     Str::clear();
     while (ifs != &top) {
@@ -154,9 +153,41 @@ void PP::clear()
 }
 
 /*
+ * include a file
+ */
+bool Preproc::include(char *file, char *buffer, unsigned int buflen)
+{
+    return TokenBuf::include(file, buffer, buflen);
+}
+
+/*
+ * include a string buffer
+ */
+void Preproc::push(char *buffer, unsigned int buflen)
+{
+    TokenBuf::push(buffer, buflen);
+}
+
+/*
+ * current filename
+ */
+char *Preproc::filename()
+{
+    return TokenBuf::filename();
+}
+
+/*
+ * current line number
+ */
+unsigned short Preproc::line()
+{
+    return TokenBuf::line();
+}
+
+/*
  * get an unpreprocessed token, skipping white space
  */
-int PP::wsgettok()
+int Preproc::wsgettok()
 {
     int token;
 
@@ -170,7 +201,7 @@ int PP::wsgettok()
 /*
  * get a token, while expanding macros
  */
-int PP::mcgtok()
+int Preproc::mcgtok()
 {
     int token;
     Macro *mc;
@@ -190,7 +221,7 @@ int PP::mcgtok()
 /*
  * get a preprocessed token, skipping white space
  */
-int PP::wsmcgtok()
+int Preproc::wsmcgtok()
 {
     int token;
 
@@ -211,7 +242,7 @@ static int expr_keep;	/* single character unget buffer for expr_get() */
  * get a token from the input stream, handling defined(IDENT),
  * replacing undefined identifiers by 0
  */
-int PP::expr_get()
+int Preproc::expr_get()
 {
     char buf[MAX_LINE_SIZE];
     int token;
@@ -258,7 +289,7 @@ int PP::expr_get()
 /*
  * evaluate an expression following #if
  */
-long PP::eval_expr(int priority)
+long Preproc::eval_expr(int priority)
 {
     int token;
     long expr, expr2;
@@ -366,7 +397,7 @@ long PP::eval_expr(int priority)
  * return a number in the range 1..12 specifying which preprocessor
  * directive the argument is, or 0 if it isn't.
  */
-int PP::pptokenz(char *key, unsigned int len)
+int Preproc::pptokenz(char *key, unsigned int len)
 {
     static const char *keyword[] = {
       "else", "error", "line", "elif", "endif", "if", "define",
@@ -394,7 +425,7 @@ int PP::pptokenz(char *key, unsigned int len)
  * the argument is, or 0 if it isn't. Note that the keywords must
  * be given in the same order here as in parser.y.
  */
-int PP::tokenz(char *key, unsigned int len)
+int Preproc::tokenz(char *key, unsigned int len)
 {
     static const char *keyword[] = {
       "nomask", "break", "do", "mapping", "else", "case", "object", "default",
@@ -427,7 +458,7 @@ int PP::tokenz(char *key, unsigned int len)
  * an error has occured, print appropriate errormessage and skip
  * till \n found
  */
-void PP::unexpected(int token, const char *wanted, const char *directive)
+void Preproc::unexpected(int token, const char *wanted, const char *directive)
 {
     if (token == LF) {
 	error("missing %s in #%s", wanted, directive);
@@ -440,14 +471,11 @@ void PP::unexpected(int token, const char *wanted, const char *directive)
 /*
  * handle an #include preprocessing directive
  */
-void PP::do_include()
+void Preproc::do_include()
 {
     char file[MAX_LINE_SIZE], path[STRINGSZ + MAX_LINE_SIZE], buf[STRINGSZ];
     int token;
     char **idir;
-    char *include;
-    String **strs;
-    int nstr;
 
     if (include_level == INCLUDEDEPTH) {
 	error("#include nesting too deep");
@@ -468,8 +496,7 @@ void PP::do_include()
 	TokenBuf::skiptonl(TRUE);
 
 	/* first try the path direct */
-	include = PM->include(buf, TokenBuf::filename(), file, &strs, &nstr);
-	if (TokenBuf::include(include, strs, nstr)) {
+	if (PM->include(buf, TokenBuf::filename(), file) != (char *) NULL) {
 	    include_level++;
 	    return;
 	}
@@ -486,8 +513,7 @@ void PP::do_include()
 	strcpy(path, *idir);
 	strcat(path, "/");
 	strcat(path, file);
-	include = PM->include(buf, TokenBuf::filename(), path, &strs, &nstr);
-	if (TokenBuf::include(include, strs, nstr)) {
+	if (PM->include(buf, TokenBuf::filename(), path) != (char *) NULL) {
 	    include_level++;
 	    return;
 	}
@@ -499,7 +525,7 @@ void PP::do_include()
  * return the index in the parameter list if the supplied token is
  * a parameter, -1 otherwise
  */
-int PP::argnum(char **args, int narg, int token)
+int Preproc::argnum(char **args, int narg, int token)
 {
     if (token == IDENTIFIER) {
 	while (narg > 0) {
@@ -514,7 +540,7 @@ int PP::argnum(char **args, int narg, int token)
 /*
  * handle a #define preprocessor directive
  */
-void PP::do_define()
+void Preproc::do_define()
 {
     char name[MAX_LINE_SIZE], buf[MAX_REPL_SIZE], *args[MAX_NARG], *arg;
     int token, i, narg, errcount;
@@ -675,8 +701,8 @@ void PP::do_define()
 	    error("macro replacement list too large");
 	} else if (Special::replace(name) != (char *) NULL) {
 	    error("#define of predefined macro");
-	} else {
-	    Macro::define(name, buf, narg);
+	} else if (!Macro::define(name, buf, narg)) {
+	    error("macro %s redefined", name);
 	}
     }
 }
@@ -685,7 +711,7 @@ void PP::do_define()
  * get a preprocessed token from the input stream, handling
  * preprocessor directives.
  */
-int PP::gettok()
+int Preproc::gettok()
 {
     int token;
     Macro *mc;

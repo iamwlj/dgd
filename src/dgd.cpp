@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -51,13 +51,13 @@ bool DGD::callDriver(Frame *f, const char *func, int narg)
 	driver_name = Config::driver();
 	driver = Object::find(driver_name, OACC_READ);
 	if (driver == (Object *) NULL) {
-	    driver = Compile::compile(f, driver_name, (Object *) NULL,
-				      (String **) NULL, 0, FALSE);
+	    driver = Compile::compile(f, driver_name, (Object *) NULL, 0,
+				      FALSE);
 	}
 	dindex = driver->index;
 	dcount = driver->count;
     }
-    if (!f->call(driver, (Array *) NULL, func, strlen(func), TRUE, narg)) {
+    if (!f->call(driver, (LWO *) NULL, func, strlen(func), TRUE, narg)) {
 	EC->fatal("missing function in driver object: %s", func);
     }
     return TRUE;
@@ -85,15 +85,15 @@ void DGD::endTask()
 
     CallOut::swapcount(Dataspace::swapout(fragment));
 
-    if (Object::stop) {
+    if (stop) {
 	Comm::clear();
 	Editor::finish();
 # ifdef DEBUG
-	Object::swap = TRUE;
+	swap = TRUE;
 # endif
     }
 
-    if (Object::swap || !MM->check()) {
+    if (swap || !MM->check()) {
 	/*
 	 * swap out everything and possibly extend the static memory area
 	 */
@@ -101,27 +101,27 @@ void DGD::endTask()
 	Array::freeall();
 	String::clean();
 	MM->purge();
-	Object::swap = FALSE;
+	swap = FALSE;
     }
 
-    if (Object::dump) {
+    if (dump) {
 	/*
 	 * create a snapshot
 	 */
-	Config::dump(Object::incr, Object::boot);
-	Object::dump = FALSE;
-	if (!Object::incr) {
+	Config::dump(incr, boot);
+	dump = FALSE;
+	if (!incr) {
 	    rebuild = TRUE;
 	    dindex = UINDEX_MAX;
 	}
     }
 
-    if (Object::stop) {
+    if (stop) {
 	Swap::finish();
 	Config::modFinish(TRUE);
 	Ext::finish();
 
-	if (Object::boot) {
+	if (boot) {
 	    char **hotboot;
 
 	    /*
@@ -136,17 +136,17 @@ void DGD::endTask()
 	Array::freeall();
 	String::clean();
 	MM->finish();
-	std::exit(Object::boot);
+	std::exit(boot);
     }
 }
 
 /*
  * default error handler
  */
-void DGD::errHandler(Frame *f, Int depth)
+void DGD::errHandler(Frame *f, LPCint depth)
 {
     UNREFERENCED_PARAMETER(depth);
-    Frame::runtimeError(f, (Int) 0);
+    Frame::runtimeError(f, 0);
 }
 
 /*
@@ -154,7 +154,7 @@ void DGD::errHandler(Frame *f, Int depth)
  */
 int DGD::main(int argc, char **argv)
 {
-    char *program, *module;
+    char *program;
     Uint rtime, timeout;
     unsigned short rmtime, mtime;
 
@@ -162,32 +162,19 @@ int DGD::main(int argc, char **argv)
 
     --argc;
     program = *argv++;
-    module = (char *) NULL;
-    if (argc > 1 && argv[0][0] == '-' && argv[0][1] == 'e') {
-	if (argv[0][2] == '\0') {
-	    --argc;
-	    argv++;
-	    module = argv[0];
-	} else {
-	    module = argv[0] + 2;
-	}
-	--argc;
-	argv++;
-    }
     if (argc < 1 || argc > 3) {
-	EC->message("Usage: %s [-e module] config_file [[partial_snapshot] snapshot]\012",     /* LF */
+	EC->message("Usage: %s config_file [[partial_snapshot] snapshot]\012",     /* LF */
 		    program);
 	return 2;
     }
 
     /* initialize */
     dindex = UINDEX_MAX;
-    Object::swap = Object::dump = Object::incr = Object::stop = FALSE;
+    swap = dump = incr = stop = FALSE;
     rebuild = TRUE;
     rtime = 0;
     if (!Config::init(argv[0], (argc > 1) ? argv[1] : (char *) NULL,
-		      (argc > 2) ? argv[2] : (char *) NULL, module,
-		      &fragment)) {
+		      (argc > 2) ? argv[2] : (char *) NULL, &fragment)) {
 	return 2;	/* initialization failed */
     }
 

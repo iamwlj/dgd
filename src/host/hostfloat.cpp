@@ -1,6 +1,6 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2023 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,9 +26,13 @@
 
 /* constants */
 
+# ifdef LARGENUM
+Float max_int =		{ 0x403dffffL, 0xfffffffff0000000LL };
+Float thousand =	{ 0x4008f400L, 0x0000000000000000LL };
+# else
 Float max_int =		{ 0x41df, 0xffffffc0L };	/* 0x7fffffff */
 Float thousand =	{ 0x408f, 0x40000000L };	/* 1e3 */
-Float thousandth =	{ 0x3f50, 0x624dd2f2L };	/* 1e-3 */
+# endif
 
 
 /*
@@ -99,7 +103,7 @@ bool Float::atof(char **s, Float *f)
     const double *t;
     unsigned short e;
     char *p, *q;
-    bool negative;
+    bool negative, digits;
 
     p = *s;
 
@@ -112,6 +116,7 @@ bool Float::atof(char **s, Float *f)
     }
 
     a = 0.0;
+    digits = FALSE;
 
     /* digits before . */
     while (isdigit(*p)) {
@@ -119,6 +124,7 @@ bool Float::atof(char **s, Float *f)
 	if (!isfinite(a)) {
 	    return FALSE;
 	}
+	digits = TRUE;
     }
 
     /* digits after . */
@@ -127,7 +133,11 @@ bool Float::atof(char **s, Float *f)
 	while (isdigit(*++p)) {
 	    a += b * (*p - '0');
 	    b *= tenths[0];
+	    digits = TRUE;
 	}
+    }
+    if (!digits) {
+	return FALSE;
     }
 
     /* exponent */
@@ -190,9 +200,9 @@ bool Float::atof(char **s, Float *f)
 void Float::ftoa(char *buffer)
 {
     short i, e;
-    Uint n;
+    FloatLow n;
     char *p;
-    char digits[10];
+    char digits[FLOAT_DIGITS + 1];
     double a;
 
     a = f_get(this);
@@ -230,15 +240,19 @@ void Float::ftoa(char *buffer)
 	}
 	e = -e;
     }
+# ifdef LARGENUM
+    a *= 1e13;
+# else
     a *= tens[3];
+# endif
 
     /*
      * obtain digits
      */
     a += 0.5;
-    n = (Uint) a;
-    if (n == 1000000000) {
-	p = digits + 8;
+    n = (FloatLow) a;
+    if (n == FLOAT_LIMIT) {
+	p = digits + FLOAT_DIGITS - 1;
 	p[0] = '1';
 	p[1] = '\0';
 	i = 1;
@@ -247,7 +261,7 @@ void Float::ftoa(char *buffer)
 	while (n != 0 && n % 10 == 0) {
 	    n /= 10;
 	}
-	p = digits + 9;
+	p = digits + FLOAT_DIGITS;
 	*p = '\0';
 	i = 0;
 	do {
@@ -257,7 +271,7 @@ void Float::ftoa(char *buffer)
 	} while (n != 0);
     }
 
-    if (e >= 9 || (e < -3 && i - e > 9)) {
+    if (e >= FLOAT_DIGITS || (e < -3 && i - e > FLOAT_DIGITS)) {
 	buffer[0] = *p;
 	if (i != 1) {
 	    buffer[1] = '.';
@@ -271,7 +285,7 @@ void Float::ftoa(char *buffer)
 	    buffer[i] = '-';
 	    e = -e;
 	}
-	p = digits + 9;
+	p = digits + FLOAT_DIGITS;
 	do {
 	    *--p = '0' + e % 10;
 	    e /= 10;
@@ -279,7 +293,7 @@ void Float::ftoa(char *buffer)
 	strcpy(buffer + i + 1, p);
     } else if (e < 0) {
 	e = 1 - e;
-	memcpy(buffer, "0.0000000", e);
+	memcpy(buffer, "0.000000000000", e);
 	strcpy(buffer + e, p);
     } else {
 	while (e >= 0) {
@@ -298,7 +312,7 @@ void Float::ftoa(char *buffer)
 /*
  * convert an integer to a float
  */
-void Float::itof(Int i, Float *f)
+void Float::itof(LPCint i, Float *f)
 {
     f_put(f, (double) i);
 }
@@ -306,23 +320,23 @@ void Float::itof(Int i, Float *f)
 /*
  * convert a float to an integer
  */
-Int Float::ftoi()
+LPCint Float::ftoi()
 {
     double a;
 
     a = f_get(this);
     if (a >= 0) {
 	a = ::floor(a + 0.5);
-	if (a > (double) (Int) INT_MAX) {
+	if (a > (double) (LPCint) LPCINT_MAX) {
 	    f_erange();
 	}
     } else {
 	a = ::ceil(a - 0.5);
-	if (a < (double) (Int) INT_MIN) {
+	if (a < (double) (LPCint) LPCINT_MIN) {
 	    f_erange();
 	}
     }
-    return (Int) a;
+    return (LPCint) a;
 }
 
 /*
@@ -368,17 +382,17 @@ void Float::div(Float &f)
  */
 int Float::cmp(Float &f)
 {
-    if ((short) (high ^ f.high) < 0) {
-	return ((short) high < 0) ? -1 : 1;
+    if ((high ^ f.high) & FLOAT_SIGN) {
+	return (high & FLOAT_SIGN) ? -1 : 1;
     }
 
     if (high == f.high && low == f.low) {
 	return 0;
     }
     if (high <= f.high && (high < f.high || low < f.low)) {
-	return ((short) high < 0) ? 1 : -1;
+	return (high & FLOAT_SIGN) ? 1 : -1;
     }
-    return ((short) high < 0) ? -1 : 1;
+    return (high & FLOAT_SIGN) ? -1 : 1;
 }
 
 /*
@@ -414,36 +428,20 @@ void Float::fmod(Float &f)
 /*
  * split a float into a fraction and an exponent
  */
-Int Float::frexp()
+LPCint Float::frexp()
 {
-    short e;
+    int e;
 
-    if (high == 0) {
-	return 0;
-    }
-    e = ((high & 0x7ff0) >> 4) - 1022;
-    high = (high & 0x800f) | (1022 << 4);
+    f_put(this, ::frexp(f_get(this), &e));
     return e;
 }
 
 /*
  * make a float from a fraction and an exponent
  */
-void Float::ldexp(Int exp)
+void Float::ldexp(LPCint exp)
 {
-    if (high == 0) {
-	return;
-    }
-    exp += (high & 0x7ff0) >> 4;
-    if (exp <= 0) {
-	high = 0;
-	low = 0;
-	return;
-    }
-    if (exp > 1023 + 1023) {
-	f_erange();
-    }
-    high = (high & 0x800f) | (exp << 4);
+    f_put(this, ::ldexp(f_get(this), exp));
 }
 
 /*

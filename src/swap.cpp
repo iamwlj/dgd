@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -45,8 +45,7 @@ static bool swapping;			/* currently using a swapfile? */
 /*
  * initialize the swap device
  */
-void Swap::init(char *file, unsigned int total, unsigned int cache,
-		unsigned int secsize)
+void Swap::init(char *file, unsigned int total, unsigned int secsize)
 {
     SwapSlot *h;
     Sector i;
@@ -54,10 +53,10 @@ void Swap::init(char *file, unsigned int total, unsigned int cache,
     /* allocate and initialize all tables */
     swapfile = file;
     swapsize = total;
-    cachesize = cache;
+    cachesize = 128;
     sectorsize = secsize;
     slotsize = sizeof(SwapSlot) + secsize;
-    mem = ALLOC(char, slotsize * cache);
+    mem = ALLOC(char, slotsize * cachesize);
     map = ALLOC(Sector, total);
     smap = ALLOC(Sector, total);
     cbuf = ALLOC(char, secsize);
@@ -73,7 +72,7 @@ void Swap::init(char *file, unsigned int total, unsigned int cache,
     mfree = SW_UNUSED;
     sfree = SW_UNUSED;
     lfree = h = (SwapSlot *) mem;
-    for (i = cache - 1; i > 0; --i) {
+    for (i = cachesize - 1; i > 0; --i) {
 	h->sec = SW_UNUSED;
 	h->next = (SwapSlot *) ((char *) h + slotsize);
 	h = h->next;
@@ -585,7 +584,7 @@ Uint Swap::compress(char *data, char *text, Uint size)
 	    buf = (buf >> 9) + 0x0080 + (UCHAR(*p) << 8);
 	    bufsize += 9;
 	}
-	x = ((x << 3) & 0x3fff) ^ Hashtab::hashchar(UCHAR(*p++));
+	x = ((x << 3) & 0x3fff) ^ HM->hashchar(UCHAR(*p++));
 
 	if (bufsize >= 8) {
 	    if (bufsize == 16) {
@@ -673,9 +672,8 @@ char *Swap::decompress(Sector *sectors,
 	    }
 	    --bufsize;
 
-	    x = ((x << 3) & 0x3fff) ^ Hashtab::hashchar(UCHAR(*q++));
+	    x = ((x << 3) & 0x3fff) ^ HM->hashchar(UCHAR(*q++));
 	}
-
 	if (size == 0) {
 	    return q - *dsize;
 	}
@@ -759,7 +757,7 @@ int Swap::save(char *snapshot, bool keep)
     }
     if (swapping) {
 	p = path_native(buf1, snapshot);
-	sprintf(buffer, "%s.old", snapshot);
+	snprintf(buffer, sizeof(buffer), "%s.old", snapshot);
 	q = path_native(buf2, buffer);
 	P_unlink(q);
 	P_rename(p, q);

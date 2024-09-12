@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,7 +22,7 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 
@@ -65,8 +65,8 @@ public:
     MapElt(Uint hashval, MapElt *next) {
 	this->hashval = hashval;
 	add = FALSE;
-	idx = Value::nil;
-	val = Value::nil;
+	idx = nil;
+	val = nil;
 	this->next = next;
     }
     ~MapElt() {
@@ -81,8 +81,8 @@ public:
      */
     void remove(Dataspace *data, Array *m) {
 	if (add) {
-	    data->assignElt(m, &idx, &Value::nil);
-	    data->assignElt(m, &val, &Value::nil);
+	    data->assignElt(m, &idx, &nil);
+	    data->assignElt(m, &val, &nil);
 	}
 	delete this;
     }
@@ -100,7 +100,7 @@ public:
 		 * index is destructed object
 		 */
 		if (add) {
-		    data->assignElt(m, &val, &Value::nil);
+		    data->assignElt(m, &val, &nil);
 		}
 		return TRUE;
 	    }
@@ -113,8 +113,8 @@ public:
 		 * index is destructed object
 		 */
 		if (add) {
-		    data->assignElt(m, &idx, &Value::nil);
-		    data->assignElt(m, &val, &Value::nil);
+		    data->assignElt(m, &idx, &nil);
+		    data->assignElt(m, &val, &nil);
 		}
 		return TRUE;
 	    }
@@ -127,7 +127,7 @@ public:
 		 * value is destructed object
 		 */
 		if (add) {
-		    data->assignElt(m, &idx, &Value::nil);
+		    data->assignElt(m, &idx, &nil);
 		}
 		return TRUE;
 	    }
@@ -140,8 +140,8 @@ public:
 		 * value is destructed object
 		 */
 		if (add) {
-		    data->assignElt(m, &idx, &Value::nil);
-		    data->assignElt(m, &val, &Value::nil);
+		    data->assignElt(m, &idx, &nil);
+		    data->assignElt(m, &val, &nil);
 		}
 		return TRUE;
 	    }
@@ -433,7 +433,7 @@ private:
 static Chunk<Array, ARR_CHUNK> achunk;
 static Chunk<Mapping, ARR_CHUNK> mchunk;
 static Chunk<LWO, ARR_CHUNK> ochunk;
-static unsigned long max_size;		/* max. size of array and mapping */
+static LPCint max_size;			/* max. size of array and mapping */
 static Uint atag;			/* current array tag */
 static ArrHash *aht[ARRMERGETABSZ];	/* array merge table */
 
@@ -502,7 +502,7 @@ Array *Array::alloc(unsigned short size)
 /*
  * create a new array
  */
-Array *Array::create(Dataspace *data, long size)
+Array *Array::create(Dataspace *data, LPCint size)
 {
     Array *a;
 
@@ -514,7 +514,7 @@ Array *Array::create(Dataspace *data, long size)
 	a->elts = ALLOC(Value, size);
     }
     a->tag = atag++;
-    a->objDestrCount = Object::objDestrCount;
+    a->objDestrCount = ::objDestrCount;
     a->primary = &data->plane->alocal;
     a->prev = &data->alist;
     a->next = data->alist.next;
@@ -526,7 +526,7 @@ Array *Array::create(Dataspace *data, long size)
 /*
  * return an initialized array
  */
-Array *Array::createNil(Dataspace *data, long size)
+Array *Array::createNil(Dataspace *data, LPCint size)
 {
     int i;
     Value *v;
@@ -534,7 +534,7 @@ Array *Array::createNil(Dataspace *data, long size)
 
     a = create(data, size);
     for (i = size, v = a->elts; i != 0; --i, v++) {
-	*v = Value::nil;
+	*v = nil;
     }
     return a;
 }
@@ -718,7 +718,7 @@ static void copytmp(Dataspace *data, Value *v1, Array *a)
     unsigned short n;
 
     v2 = Dataspace::elts(a);
-    if (a->objDestrCount == Object::objDestrCount) {
+    if (a->objDestrCount == ::objDestrCount) {
 	/*
 	 * no need to check for destructed objects
 	 */
@@ -728,19 +728,19 @@ static void copytmp(Dataspace *data, Value *v1, Array *a)
 	 * Copy and check for destructed objects.  If destructed objects are
 	 * found, they will be replaced by nil in the original array.
 	 */
-	a->objDestrCount = Object::objDestrCount;
+	a->objDestrCount = ::objDestrCount;
 	for (n = a->size; n != 0; --n) {
 	    switch (v2->type) {
 	    case T_OBJECT:
 		if (DESTRUCTED(v2)) {
-		    data->assignElt(a, v2, &Value::nil);
+		    data->assignElt(a, v2, &nil);
 		}
 		break;
 
 	    case T_LWOBJECT:
 		o = Dataspace::elts(v2->array);
 		if (o->type == T_OBJECT && DESTRUCTED(o)) {
-		    data->assignElt(a, v2, &Value::nil);
+		    data->assignElt(a, v2, &nil);
 		}
 		break;
 	    }
@@ -756,7 +756,7 @@ Array *Array::add(Dataspace *data, Array *a2)
 {
     Array *a;
 
-    a = create(data, (long) size + a2->size);
+    a = create(data, (LPCint) size + a2->size);
     Value::copy(a->elts, Dataspace::elts(this), size);
     Value::copy(a->elts + size, Dataspace::elts(a2), a2->size);
     Dataspace::refImports(a);
@@ -819,7 +819,7 @@ static int cmp(cvoid *cv1, cvoid *cv2)
 static int search(Value *v1, Value *v2, unsigned short h, int step, bool place)
 {
     unsigned short l, m;
-    Int c;
+    int c;
     Value *v3;
     unsigned short mask;
 
@@ -920,7 +920,7 @@ Array *Array::sub(Dataspace *data, Array *a2)
 
     v1 = Dataspace::elts(this);
     v3 = a3->elts;
-    if (objDestrCount == Object::objDestrCount) {
+    if (objDestrCount == ::objDestrCount) {
 	for (n = size; n > 0; --n) {
 	    if (search(v1, v2, a2->size, 1, FALSE) < 0) {
 		/*
@@ -932,13 +932,13 @@ Array *Array::sub(Dataspace *data, Array *a2)
 	    v1++;
 	}
     } else {
-	objDestrCount = Object::objDestrCount;
+	objDestrCount = ::objDestrCount;
 	for (n = size; n > 0; --n) {
 	    switch (v1->type) {
 	    case T_OBJECT:
 		if (DESTRUCTED(v1)) {
 		    /* replace destructed object by nil */
-		    primary->data->assignElt(this, v1, &Value::nil);
+		    primary->data->assignElt(this, v1, &nil);
 		}
 		break;
 
@@ -946,7 +946,7 @@ Array *Array::sub(Dataspace *data, Array *a2)
 		o = Dataspace::elts(v1->array);
 		if (o->type == T_OBJECT && DESTRUCTED(o)) {
 		    /* replace destructed object by nil */
-		    primary->data->assignElt(this, v1, &Value::nil);
+		    primary->data->assignElt(this, v1, &nil);
 		}
 		break;
 	    }
@@ -995,7 +995,7 @@ Array *Array::intersect(Dataspace *data, Array *a2)
 
     v1 = Dataspace::elts(this);
     v3 = a3->elts;
-    if (objDestrCount == Object::objDestrCount) {
+    if (objDestrCount == ::objDestrCount) {
 	for (n = size; n > 0; --n) {
 	    if (search(v1, v2, a2->size, 1, FALSE) >= 0) {
 		/*
@@ -1007,13 +1007,13 @@ Array *Array::intersect(Dataspace *data, Array *a2)
 	    v1++;
 	}
     } else {
-	objDestrCount = Object::objDestrCount;
+	objDestrCount = ::objDestrCount;
 	for (n = size; n > 0; --n) {
 	    switch (v1->type) {
 	    case T_OBJECT:
 		if (DESTRUCTED(v1)) {
 		    /* replace destructed object by nil */
-		    primary->data->assignElt(this, v1, &Value::nil);
+		    primary->data->assignElt(this, v1, &nil);
 		}
 		break;
 
@@ -1021,7 +1021,7 @@ Array *Array::intersect(Dataspace *data, Array *a2)
 		o = Dataspace::elts(v1->array);
 		if (o->type == T_OBJECT && DESTRUCTED(o)) {
 		    /* replace destructed object by nil */
-		    primary->data->assignElt(this, v1, &Value::nil);
+		    primary->data->assignElt(this, v1, &nil);
 		}
 		break;
 	    }
@@ -1081,7 +1081,7 @@ Array *Array::setAdd(Dataspace *data, Array *a2)
 
     v = v3;
     v2 = Dataspace::elts(a2);
-    if (a2->objDestrCount == Object::objDestrCount) {
+    if (a2->objDestrCount == ::objDestrCount) {
 	for (n = a2->size; n > 0; --n) {
 	    if (search(v2, v1, size, 1, FALSE) < 0) {
 		/*
@@ -1092,13 +1092,13 @@ Array *Array::setAdd(Dataspace *data, Array *a2)
 	    v2++;
 	}
     } else {
-	a2->objDestrCount = Object::objDestrCount;
+	a2->objDestrCount = ::objDestrCount;
 	for (n = a2->size; n > 0; --n) {
 	    switch (v2->type) {
 	    case T_OBJECT:
 		if (DESTRUCTED(v2)) {
 		    /* replace destructed object by nil */
-		    a2->primary->data->assignElt(a2, v2, &Value::nil);
+		    a2->primary->data->assignElt(a2, v2, &nil);
 		}
 		break;
 
@@ -1106,7 +1106,7 @@ Array *Array::setAdd(Dataspace *data, Array *a2)
 		o = Dataspace::elts(v2->array);
 		if (o->type == T_OBJECT && DESTRUCTED(o)) {
 		    /* replace destructed object by nil */
-		    a2->primary->data->assignElt(a2, v2, &Value::nil);
+		    a2->primary->data->assignElt(a2, v2, &nil);
 		}
 		break;
 	    }
@@ -1122,12 +1122,12 @@ Array *Array::setAdd(Dataspace *data, Array *a2)
     AFREE(v1);	/* free copy of values of 1st array */
 
     n = v - v3;
-    if ((long) size + n > max_size) {
+    if ((LPCint) size + n > max_size) {
 	AFREE(v3);
 	EC->error("Array too large");
     }
 
-    a3 = create(data, (long) size + n);
+    a3 = create(data, (LPCint) size + n);
     Value::copy(a3->elts, elts, size);
     Value::copy(a3->elts + size, v3, n);
     AFREE(v3);
@@ -1207,14 +1207,14 @@ Array *Array::setXAdd(Dataspace *data, Array *a2)
     }
 
     n = v - v2;
-    if ((long) num + n > max_size) {
+    if ((LPCint) num + n > max_size) {
 	AFREE(v3);
 	AFREE(v2);
 	AFREE(v1);
 	EC->error("Array too large");
     }
 
-    a3 = create(data, (long) num + n);
+    a3 = create(data, (LPCint) num + n);
     Value::copy(a3->elts, v3, num);
     Value::copy(a3->elts + num, v2, n);
     AFREE(v3);
@@ -1228,9 +1228,9 @@ Array *Array::setXAdd(Dataspace *data, Array *a2)
 /*
  * index an array
  */
-unsigned short Array::index(long l)
+unsigned short Array::index(LPCint l)
 {
-    if (l < 0 || l >= (long) size) {
+    if (l < 0 || l >= (LPCint) size) {
 	EC->error("Array index out of range");
     }
     return l;
@@ -1239,9 +1239,9 @@ unsigned short Array::index(long l)
 /*
  * check an array subrange
  */
-void Array::checkRange(long l1, long l2)
+void Array::checkRange(LPCint l1, LPCint l2)
 {
-    if (l1 < 0 || l1 > l2 + 1 || l2 >= (long) size) {
+    if (l1 < 0 || l1 > l2 + 1 || l2 >= (LPCint) size) {
 	EC->error("Invalid array range");
     }
 }
@@ -1249,11 +1249,11 @@ void Array::checkRange(long l1, long l2)
 /*
  * return a subrange of an array
  */
-Array *Array::range(Dataspace *data, long l1, long l2)
+Array *Array::range(Dataspace *data, LPCint l1, LPCint l2)
 {
     Array *range;
 
-    if (l1 < 0 || l1 > l2 + 1 || l2 >= (long) size) {
+    if (l1 < 0 || l1 > l2 + 1 || l2 >= (LPCint) size) {
 	EC->error("Invalid array range");
     }
 
@@ -1312,7 +1312,7 @@ Mapping *Mapping::alloc(unsigned short size)
 /*
  * create a new mapping
  */
-Mapping *Mapping::create(Dataspace *data, long size)
+Mapping *Mapping::create(Dataspace *data, LPCint size)
 {
     Mapping *m;
 
@@ -1324,7 +1324,7 @@ Mapping *Mapping::create(Dataspace *data, long size)
 	m->elts = ALLOC(Value, size);
     }
     m->tag = atag++;
-    m->objDestrCount = Object::objDestrCount;
+    m->objDestrCount = ::objDestrCount;
     m->primary = &data->plane->alocal;
     m->prev = &data->alist;
     m->next = data->alist.next;
@@ -1390,7 +1390,7 @@ void Mapping::dehash(Dataspace *data, bool clean)
 		    /*
 		     * index is destructed object
 		     */
-		    data->assignElt(this, v2 + 1, &Value::nil);
+		    data->assignElt(this, v2 + 1, &nil);
 		    v2 += 2;
 		    continue;
 		}
@@ -1402,8 +1402,8 @@ void Mapping::dehash(Dataspace *data, bool clean)
 		    /*
 		     * index is destructed object
 		     */
-		    data->assignElt(this, v2++, &Value::nil);
-		    data->assignElt(this, v2++, &Value::nil);
+		    data->assignElt(this, v2++, &nil);
+		    data->assignElt(this, v2++, &nil);
 		    continue;
 		}
 		break;
@@ -1414,7 +1414,7 @@ void Mapping::dehash(Dataspace *data, bool clean)
 		    /*
 		     * value is destructed object
 		     */
-		    data->assignElt(this, v2, &Value::nil);
+		    data->assignElt(this, v2, &nil);
 		    v2 += 2;
 		    continue;
 		}
@@ -1426,8 +1426,8 @@ void Mapping::dehash(Dataspace *data, bool clean)
 		    /*
 		     * value is destructed object
 		     */
-		    data->assignElt(this, v2++, &Value::nil);
-		    data->assignElt(this, v2++, &Value::nil);
+		    data->assignElt(this, v2++, &nil);
+		    data->assignElt(this, v2++, &nil);
 		    continue;
 		}
 		break;
@@ -1524,14 +1524,14 @@ bool Mapping::trim()
  */
 void Mapping::compact(Dataspace *data)
 {
-    if (hashmod || objDestrCount != Object::objDestrCount) {
+    if (hashmod || objDestrCount != ::objDestrCount) {
 	if (hashmod && (!THISPLANE(primary) || !SAMEPLANE(data, primary->data)))
 	{
 	    dehash(data, FALSE);
 	}
 
 	dehash(data, TRUE);
-	objDestrCount = Object::objDestrCount;
+	objDestrCount = ::objDestrCount;
     }
 }
 
@@ -1561,13 +1561,13 @@ Array *Mapping::add(Dataspace *data, Array *a2)
 {
     Value *v1, *v2, *v3;
     unsigned short n1, n2;
-    Int c;
+    int c;
     Mapping *m2, *m3;
 
     compact(data);
     m2 = (Mapping *) a2;
     m2->compact(data);
-    m3 = create(data, (long) size + m2->size);
+    m3 = create(data, (LPCint) size + m2->size);
     if (m3->size == 0) {
 	/* add two empty mappings */
 	return m3;
@@ -1644,7 +1644,7 @@ Array *Mapping::sub(Dataspace *data, Array *a2)
 {
     Value *v1, *v2, *v3;
     unsigned short n1, n2;
-    Int c;
+    int c;
     Mapping *m3;
 
     compact(data);
@@ -1729,7 +1729,7 @@ Array *Mapping::intersect(Dataspace *data, Array *a2)
 {
     Value *v1, *v2, *v3;
     unsigned short n1, n2;
-    Int c;
+    int c;
     Mapping *m3;
 
     compact(data);
@@ -1840,8 +1840,7 @@ Value *Mapping::index(Dataspace *data, Value *val, Value *elt, Value *verify)
 	break;
 
     case T_STRING:
-	i = Hashtab::hashstr(val->string->text, STRMAPHASHSZ) ^
-							    val->string->len;
+	i = HM->hashstr(val->string->text, STRMAPHASHSZ) ^ val->string->len;
 	break;
 
     case T_OBJECT:
@@ -1891,7 +1890,7 @@ Value *Mapping::index(Dataspace *data, Value *val, Value *elt, Value *verify)
 		hashed->remove(p, data, this);
 
 		if (add) {
-		    return &Value::nil;
+		    return &nil;
 		}
 
 		/* change array part also */
@@ -1931,8 +1930,8 @@ Value *Mapping::index(Dataspace *data, Value *val, Value *elt, Value *verify)
 		/*
 		 * delete the element
 		 */
-		data->assignElt(this, v, &Value::nil);
-		data->assignElt(this, v + 1, &Value::nil);
+		data->assignElt(this, v, &nil);
+		data->assignElt(this, v + 1, &nil);
 
 		size -= 2;
 		if (size == 0) {
@@ -1944,7 +1943,7 @@ Value *Mapping::index(Dataspace *data, Value *val, Value *elt, Value *verify)
 		    memmove(v, v + 2, (size - n) * sizeof(Value));
 		}
 		Dataspace::changeMap(this);
-		return &Value::nil;
+		return &nil;
 	    }
 	    val = v;
 	    elt = v + 1;
@@ -1953,7 +1952,7 @@ Value *Mapping::index(Dataspace *data, Value *val, Value *elt, Value *verify)
     }
 
     if (elt == (Value *) NULL) {
-	return &Value::nil;	/* not found */
+	return &nil;	/* not found */
     }
 
     if (!hash) {
@@ -2104,7 +2103,7 @@ LWO *LWO::create(Dataspace *data, Object *obj)
     PUT_FLTVAL(&a->elts[1], flt);
     Dataspace::newVars(ctrl, a->elts + 2);
     a->tag = atag++;
-    a->objDestrCount = Object::objDestrCount;
+    a->objDestrCount = ::objDestrCount;
     a->primary = &data->plane->alocal;
     a->prev = &data->alist;
     a->next = data->alist.next;
@@ -2123,7 +2122,7 @@ LWO *LWO::copy(Dataspace *data)
     copy = alloc(size);
     Value::copy(copy->elts = ALLOC(Value, size), elts, size);
     copy->tag = atag++;
-    copy->objDestrCount = Object::objDestrCount;
+    copy->objDestrCount = ::objDestrCount;
     copy->primary = &data->plane->alocal;
     copy->prev = &data->alist;
     copy->next = data->alist.next;

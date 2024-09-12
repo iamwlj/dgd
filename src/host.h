@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2023 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -53,13 +53,16 @@ typedef unsigned int Uint;
 # include <stdio.h>
 # include <stdarg.h>
 
+# if _MSC_VER < 1900		/* Visual Studio 2015 */
+# define snprintf		_snprintf_s
+# define vsnprintf		_vsnprintf_s
+# endif
+
 # define ALLOCA(type, size)	((type *) alloca(sizeof(type) * \
 							     (size_t) (size)))
 # define AFREE(ptr)		/* on function return */
 
 # define FS_BLOCK_SIZE		2048
-
-# define Uuint			unsigned __int64
 
 typedef int (__stdcall _voidf_)();
 # define voidf			_voidf_
@@ -228,18 +231,6 @@ typedef unsigned int Uint;
 # ifndef TRUE
 # define TRUE		1
 # define FALSE		0
-# endif
-
-/*
- * We assume this works on all compilers, but know it
- * doesn't on gcc before 2.x (does anyone use that anyway?)
- */
-# ifndef Uuint
-#  if !defined(__GNUC__) || __GNUC__ >= 2
-#   define Uuint unsigned long long
-#  else
-#   error No long long support available?
-#  endif
 # endif
 
 extern void  P_message	(const char*);

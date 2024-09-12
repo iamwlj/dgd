@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -51,6 +51,33 @@ typedef EINDEX_TYPE eindex;
 # define EINDEX(e)	((eindex) e)
 typedef SSIZET_TYPE ssizet;
 
+# ifdef LARGENUM
+
+# if UINDEX_MAX == USHRT_MAX
+# error LARGENUM requires uindex of 4 bytes or more
+# endif
+
+typedef int64_t LPCint;
+typedef uint64_t LPCuint;
+
+# define LPCINT_MIN	0x8000000000000000LL
+# define LPCINT_MAX	0x7fffffffffffffffLL
+# define LPCINT_BITS	64
+# define LPCINT_BUFFER	22
+# define LPCUINT_MAX	0xffffffffffffffffLL
+
+# else
+
+typedef Int LPCint;
+typedef Uint LPCuint;
+
+# define LPCINT_MIN	0x80000000L
+# define LPCINT_MAX	0x7fffffffL
+# define LPCINT_BITS	32
+# define LPCINT_BUFFER	12
+# define LPCUINT_MAX	0xffffffffL
+
+# endif
 
 typedef unsigned short kfindex;
 # define KFTAB_SIZE	1024
@@ -127,13 +154,13 @@ public:
     char secsize[2];
     char s[2];			/* short */
     char i[4];			/* Int */
-    char l[8];			/* Uuint */
+    char l[8];			/* int64_t */
     char utsize;		/* sizeof(uindex) + sizeof(ssizet) */
     char desize;		/* sizeof(sector) + sizeof(eindex) */
     char psize;			/* sizeof(char*), upper nibble reserved */
-    char calign;		/* align(char) */
-    char salign;		/* align(short) */
-    char ilalign;		/* align(Int) + align(Uuint) */
+    char calign;		/* align(char), upper nibble reserved */
+    char snalsz;		/* align(short) + sizeof(LPCint)  */
+    char ilalign;		/* align(Int) + align(int64_t) */
     char palign;		/* align(char*) */
     char zalign;		/* align(struct) */
     char start[4];
@@ -143,7 +170,7 @@ public:
     char zero3;			/* reserved (0) */
     char zero4;			/* reserved (0) */
     char dflags;		/* flags */
-    char zero5;			/* reserved (0) */
+    char vmversion;		/* VM version */
     char vstr[18];
     char offset[4];
 
@@ -154,7 +181,7 @@ class Config {
 public:
     static void modFinish(bool wait);
     static bool init(char *configfile, char *snapshot, char *snapshot2,
-		     char *module, Sector *fragment);
+		     Sector *fragment);
     static char *baseDir();
     static char	*driver();
     static char	**hotbootExec();
@@ -167,9 +194,9 @@ public:
     static Uint dconv(char *buf, char *rbuf, const char *layout, Uint n);
     static void dread(int fd, char *buf, const char *layout, Uint n);
 
-    static bool statusi(Frame *f, Int idx, Value *v);
+    static bool statusi(Frame *f, LPCint idx, Value *v);
     static Array *status(Frame *f);
-    static bool objecti(Dataspace *data, Object *obj, Int idx, Value *v);
+    static bool objecti(Dataspace *data, Object *obj, LPCint idx, Value *v);
     static Array *object(Dataspace *data, Object *obj);
 
     const char *name;	/* name of the option */
@@ -196,4 +223,4 @@ private:
 };
 
 /* utility functions */
-extern Int strtoint		(char**);
+extern LPCint strtoint(char**);

@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -31,8 +31,8 @@ extern String *P_encrypt_des_key (Frame*, String*);
 extern String *P_encrypt_des (Frame*, String*, String*);
 extern void ext_runtime_error (Frame*, const char*);
 
-char pt_encrypt[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_MIXED, T_STRING,
-		      T_STRING, T_STRING };
+char pt_encrypt[] = { C_TYPECHECKED | C_STATIC | C_ELLIPSIS, 1, 1, 0, 8,
+		      T_MIXED, T_STRING, T_MIXED };
 
 /*
  * prepare a key for encryption
@@ -90,8 +90,8 @@ FUNCDEF("decrypt", kf_decrypt, pt_decrypt, 0)
 # else
 extern String *P_decrypt_des_key (Frame*, String*);
 
-char pt_decrypt[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_MIXED, T_STRING,
-		      T_STRING, T_STRING };
+char pt_decrypt[] = { C_TYPECHECKED | C_STATIC | C_ELLIPSIS, 1, 1, 0, 8,
+		      T_MIXED, T_STRING, T_MIXED };
 
 /*
  * prepare a key for decryption
@@ -181,7 +181,7 @@ char pt_explode[] = { C_TYPECHECKED | C_STATIC, 2, 0, 0, 8,
 static char *memxmem(char *mem, unsigned int mlen, char *str,
 		     unsigned int slen)
 {
-    register unsigned int i, checksum, mult, accu;
+    unsigned int i, checksum, mult, accu;
     char *p;
 
     if (mlen < slen) {
@@ -304,7 +304,7 @@ int kf_explode(Frame *f, int n, KFun *kf)
     (f->sp++)->string->del();
     f->sp->string->del();
     PUT_ARRVAL(f->sp, a);
-    f->addTicks((Int) 2 * a->size);
+    f->addTicks((LPCint) 2 * a->size);
 
     return 0;
 }
@@ -390,8 +390,18 @@ int kf_random(Frame *f, int n, KFun *kf)
     if (f->sp->number < 0) {
 	return 1;
     }
-    PUT_INT(f->sp, (f->sp->number > 0) ?
-		    P_random() % f->sp->number : P_random());
+    if (f->sp->number == 0) {
+# ifdef LARGENUM
+	PUT_INT(f->sp, ((LPCuint) (Uint) P_random() << 31) ^ (Uint) P_random());
+    } else if (f->sp->number > 0xffffffffL) {
+	PUT_INT(f->sp, (((LPCuint) (Uint) P_random() << 31) ^
+			(Uint) P_random()) % f->sp->number);
+# else
+	PUT_INT(f->sp, (Uint) P_random() & 0x7fffffffL);
+# endif
+    } else {
+	PUT_INT(f->sp, (Uint) P_random() % f->sp->number);
+    }
     return 0;
 }
 # endif
@@ -410,7 +420,7 @@ char pt_sscanf[] = { C_STATIC | C_ELLIPSIS, 2, 1, 0, 9, T_INT, T_STRING,
 unsigned int scan(char *f, unsigned int *flenp, char *buf)
 {
     char *p;
-    unsigned int flen, buflen;
+    unsigned int flen;
 
     p = buf;
     flen = *flenp;
@@ -439,12 +449,12 @@ int kf_sscanf(Frame *f, int nargs, KFun *kf)
     struct {
 	char type;			/* int, float or string */
 	union {
-	    unsigned short fhigh;	/* high word of float */
+	    FloatHigh fhigh;		/* high word of float */
 	    ssizet len;			/* length of string */
 	};
 	union {
-	    Int number;			/* number */
-	    Uint flow;			/* low longword of float */
+	    LPCint number;		/* number */
+	    FloatLow flow;		/* low longword of float */
 	    char *text;			/* text of string */
 	};
     } results[MAX_LOCALS];
@@ -453,7 +463,7 @@ int kf_sscanf(Frame *f, int nargs, KFun *kf)
     unsigned int fl;
     int matches;
     char *s, *buffer, *match;
-    Int i;
+    LPCint i;
     Float flt;
     bool skip;
     Value *top, *elts;
@@ -461,7 +471,6 @@ int kf_sscanf(Frame *f, int nargs, KFun *kf)
 
     UNREFERENCED_PARAMETER(kf);
 
-    size = 0;
     x = NULL;
 
     if (nargs < 2) {
@@ -752,7 +761,7 @@ char pt_parse_string[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9,
  */
 int kf_parse_string(Frame *f, int nargs, KFun *kf)
 {
-    Int maxalt;
+    LPCint maxalt;
     Array *a;
 
     UNREFERENCED_PARAMETER(kf);
@@ -779,7 +788,7 @@ int kf_parse_string(Frame *f, int nargs, KFun *kf)
 	PUT_ARRVAL(f->sp, a);
     } else {
 	/* parsing failed */
-	*f->sp = Value::nil;
+	*f->sp = nil;
     }
     return 0;
 }
@@ -846,7 +855,7 @@ int kf_hash_crc16(Frame *f, int nargs, KFun *kf)
     int i;
     ssizet len;
     char *p;
-    Int cost;
+    LPCint cost;
 
     UNREFERENCED_PARAMETER(kf);
 
@@ -958,7 +967,7 @@ int kf_hash_crc32(Frame *f, int nargs, KFun *kf)
     int i;
     ssizet len;
     char *p;
-    Int cost;
+    LPCint cost;
 
     UNREFERENCED_PARAMETER(kf);
 
@@ -1186,9 +1195,9 @@ void hash_md5_end(char *hash, Uint *digest, char *buffer, unsigned int bufsz,
 /*
  * SHA-1 message digest.  See FIPS 180-2.
  */
-static Int hash_sha1_start(Frame *f, int nargs, Uint *digest)
+static LPCint hash_sha1_start(Frame *f, int nargs, Uint *digest)
 {
-    Int cost;
+    LPCint cost;
 
     digest[0] = 0x67452301L;
     digest[1] = 0xefcdab89L;
@@ -1366,7 +1375,7 @@ void kf_md5(Frame *f, int nargs, Value *val)
 {
     char buffer[64];
     Uint digest[5];
-    Int cost;
+    LPCint cost;
     int i;
     Uint length;
     unsigned short bufsz;
@@ -1396,7 +1405,7 @@ void kf_sha1(Frame *f, int nargs, Value *val)
 {
     char buffer[64];
     Uint digest[5];
-    Int cost;
+    LPCint cost;
     Uint length;
     unsigned short bufsz;
     String *str;
@@ -1465,9 +1474,12 @@ int kf_crypt(Frame *f, int nargs, KFun *kf)
 
 
 # ifdef FUNCDEF
-FUNCDEF("asn_add", kf_asn_add, pt_asn_add, 0)
+FUNCDEF("0.asn_add", kf_asn_add, pt_asn_add_old, 0)
+FUNCDEF("asn_add", kf_asn_add, pt_asn_add, 1)
 # else
-char pt_asn_add[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING, T_STRING,
+char pt_asn_add_old[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+			  T_STRING, T_STRING, T_STRING };
+char pt_asn_add[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_STRING, T_STRING,
 		      T_STRING, T_STRING };
 
 /*
@@ -1477,9 +1489,11 @@ int kf_asn_add(Frame *f, int n, KFun *kf)
 {
     String *str;
 
-    UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
+    if (n < 3) {
+	return -1;
+    }
     str = ASN::add(f, f->sp[2].string, f->sp[1].string, f->sp[0].string);
     (f->sp++)->string->del();
     (f->sp++)->string->del();
@@ -1492,9 +1506,12 @@ int kf_asn_add(Frame *f, int n, KFun *kf)
 
 
 # ifdef FUNCDEF
-FUNCDEF("asn_sub", kf_asn_sub, pt_asn_sub, 0)
+FUNCDEF("0.asn_sub", kf_asn_sub, pt_asn_sub_old, 0)
+FUNCDEF("asn_sub", kf_asn_sub, pt_asn_sub, 1)
 # else
-char pt_asn_sub[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING, T_STRING,
+char pt_asn_sub_old[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+			  T_STRING, T_STRING, T_STRING };
+char pt_asn_sub[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_STRING, T_STRING,
 		      T_STRING, T_STRING };
 
 /*
@@ -1504,9 +1521,11 @@ int kf_asn_sub(Frame *f, int n, KFun *kf)
 {
     String *str;
 
-    UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
+    if (n < 3) {
+	return -1;
+    }
     str = ASN::sub(f, f->sp[2].string, f->sp[1].string, f->sp[0].string);
     (f->sp++)->string->del();
     (f->sp++)->string->del();
@@ -1545,9 +1564,12 @@ int kf_asn_cmp(Frame *f, int n, KFun *kf)
 
 
 # ifdef FUNCDEF
-FUNCDEF("asn_mult", kf_asn_mult, pt_asn_mult, 0)
+FUNCDEF("0.asn_mult", kf_asn_mult, pt_asn_mult_old, 0)
+FUNCDEF("asn_mult", kf_asn_mult, pt_asn_mult, 1)
 # else
-char pt_asn_mult[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING, T_STRING,
+char pt_asn_mult_old[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+			   T_STRING, T_STRING, T_STRING };
+char pt_asn_mult[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_STRING, T_STRING,
 		       T_STRING, T_STRING };
 
 /*
@@ -1557,9 +1579,11 @@ int kf_asn_mult(Frame *f, int n, KFun *kf)
 {
     String *str;
 
-    UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
+    if (n < 3) {
+	return -1;
+    }
     str = ASN::mult(f, f->sp[2].string, f->sp[1].string, f->sp[0].string);
     (f->sp++)->string->del();
     (f->sp++)->string->del();
@@ -1572,9 +1596,12 @@ int kf_asn_mult(Frame *f, int n, KFun *kf)
 
 
 # ifdef FUNCDEF
+FUNCDEF("0.asn_div", kf_asn_div, pt_asn_div_old, 0)
 FUNCDEF("asn_div", kf_asn_div, pt_asn_div, 0)
 # else
-char pt_asn_div[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING, T_STRING,
+char pt_asn_div_old[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+			  T_STRING, T_STRING, T_STRING };
+char pt_asn_div[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_STRING, T_STRING,
 		      T_STRING, T_STRING };
 
 /*
@@ -1584,9 +1611,11 @@ int kf_asn_div(Frame *f, int n, KFun *kf)
 {
     String *str;
 
-    UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
+    if (n < 3) {
+	return -1;
+    }
     str = ASN::div(f, f->sp[2].string, f->sp[1].string, f->sp[0].string);
     (f->sp++)->string->del();
     (f->sp++)->string->del();
@@ -1625,9 +1654,12 @@ int kf_asn_mod(Frame *f, int n, KFun *kf)
 
 
 # ifdef FUNCDEF
+FUNCDEF("0.asn_pow", kf_asn_pow, pt_asn_pow_old, 0)
 FUNCDEF("asn_pow", kf_asn_pow, pt_asn_pow, 0)
 # else
-char pt_asn_pow[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING, T_STRING,
+char pt_asn_pow_old[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+			  T_STRING, T_STRING, T_STRING };
+char pt_asn_pow[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_STRING, T_STRING,
 		      T_STRING, T_STRING };
 
 /*
@@ -1637,9 +1669,11 @@ int kf_asn_pow(Frame *f, int n, KFun *kf)
 {
     String *str;
 
-    UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
+    if (n < 3) {
+	return -1;
+    }
     str = ASN::pow(f, f->sp[2].string, f->sp[1].string, f->sp[0].string);
     (f->sp++)->string->del();
     (f->sp++)->string->del();
@@ -1652,9 +1686,38 @@ int kf_asn_pow(Frame *f, int n, KFun *kf)
 
 
 # ifdef FUNCDEF
+FUNCDEF("asn_modinv", kf_asn_modinv, pt_asn_modinv, 0)
+# else
+char pt_asn_modinv[] = { C_TYPECHECKED | C_STATIC, 2, 0, 0, 8, T_STRING,
+			 T_STRING, T_STRING };
+
+/*
+ * modular inverse of arbitrary precision number
+ */
+int kf_asn_modinv(Frame *f, int n, KFun *kf)
+{
+    String *str;
+
+    UNREFERENCED_PARAMETER(n);
+    UNREFERENCED_PARAMETER(kf);
+
+    str = ASN::modinv(f, f->sp[1].string, f->sp[0].string);
+    (f->sp++)->string->del();
+    f->sp->string->del();
+    PUT_STR(f->sp, str);
+
+    return 0;
+}
+# endif
+
+
+# ifdef FUNCDEF
+FUNCDEF("0.asn_lshift", kf_asn_lshift, pt_asn_lshift_old, 0)
 FUNCDEF("asn_lshift", kf_asn_lshift, pt_asn_lshift, 0)
 # else
-char pt_asn_lshift[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+char pt_asn_lshift_old[] = { C_TYPECHECKED | C_STATIC, 3, 0, 0, 9, T_STRING,
+			     T_STRING, T_INT, T_STRING };
+char pt_asn_lshift[] = { C_TYPECHECKED | C_STATIC, 2, 1, 0, 9, T_STRING,
 			 T_STRING, T_INT, T_STRING };
 
 /*
@@ -1664,9 +1727,11 @@ int kf_asn_lshift(Frame *f, int n, KFun *kf)
 {
     String *str;
 
-    UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
+    if (n < 3) {
+	return -1;
+    }
     str = ASN::lshift(f, f->sp[2].string, f->sp[1].number, f->sp->string);
     f->sp->string->del();
     f->sp += 2;

@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -24,7 +24,7 @@
 # include "array.h"
 # include "object.h"
 # include "xfloat.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "data.h"
 # include "interpret.h"
 # include "path.h"
@@ -33,11 +33,9 @@
 # include "comm.h"
 # include "ext.h"
 # include "version.h"
-# include "macro.h"
-# include "token.h"
 # include "ppcontrol.h"
 # include "node.h"
-# include "dparser.h"
+# include "parser.h"
 # include "compile.h"
 # include "table.h"
 
@@ -120,7 +118,7 @@ static Config conf[] = {
 struct alignc { char fill; char c;	};
 struct aligns { char fill; short s;	};
 struct aligni { char fill; Int i;	};
-struct alignl { char fill; Uuint l;	};
+struct alignl { char fill; int64_t l;	};
 struct alignp { char fill; char *p;	};
 struct alignz { char c;			};
 
@@ -134,8 +132,9 @@ struct alignz { char c;			};
 # define FLAGS_HOTBOOT	0x04	/* hotboot snapshot */
 
 static SnapshotInfo header;	/* snapshot header */
+static int salign;		/* align(short) */
 static int ialign;		/* align(Int) */
-static int lalign;		/* align(Uuint) */
+static int lalign;		/* align(int64_t) */
 static int ualign;		/* align(uindex) */
 static int talign;		/* align(ssizet) */
 static int dalign;		/* align(sector) */
@@ -145,8 +144,10 @@ static int rusize;		/* sizeof(uindex) */
 static int rtsize;		/* sizeof(ssizet) */
 static int rdsize;		/* sizeof(sector) */
 static int resize;		/* sizeof(eindex) */
+static int rnsize;		/* sizeof(LPCint) */
+static int rsalign;		/* align(short) */
 static int rialign;		/* align(Int) */
-static int rlalign;		/* align(Uuint) */
+static int rlalign;		/* align(int64_t) */
 static int rualign;		/* align(uindex) */
 static int rtalign;		/* align(ssizet) */
 static int rdalign;		/* align(sector) */
@@ -190,7 +191,7 @@ void Config::dumpinit()
 {
     short s;
     Int i;
-    Uuint l;
+    int64_t l;
     alignc cdummy;
     aligns sdummy;
     aligni idummy;
@@ -228,20 +229,22 @@ void Config::dumpinit()
     header.desize = sizeof(Sector) | (sizeof(eindex) << 4);
     header.psize = sizeof(char*) | (sizeof(char) << 4);
     header.calign = (char *) &cdummy.c - (char *) &cdummy.fill;
-    header.salign = (char *) &sdummy.s - (char *) &sdummy.fill;
+    salign = (char *) &sdummy.s - (char *) &sdummy.fill;
+    header.snalsz = salign | ((sizeof(LPCint) - 4) << 4);
     ialign = (char *) &idummy.i - (char *) &idummy.fill;
     lalign = (char *) &ldummy.l - (char *) &ldummy.fill;
     header.ilalign = ialign | (lalign << 4);
     header.palign = (char *) &pdummy.p - (char *) &pdummy.fill;
     header.zalign = sizeof(alignz);
-    header.zero1 = header.zero2 = 0;
+    header.zero1 = header.zero2 = header.zero3 = header.zero4 = 0;
+    header.vmversion = VERSION_VM_MINOR;
 
-    ualign = (sizeof(uindex) == sizeof(short)) ? header.salign : ialign;
-    talign = (sizeof(ssizet) == sizeof(short)) ? header.salign : ialign;
-    dalign = (sizeof(Sector) == sizeof(short)) ? header.salign : ialign;
+    ualign = (sizeof(uindex) == sizeof(short)) ? salign : ialign;
+    talign = (sizeof(ssizet) == sizeof(short)) ? salign : ialign;
+    dalign = (sizeof(Sector) == sizeof(short)) ? salign : ialign;
     switch (sizeof(eindex)) {
     case sizeof(char):	ealign = header.calign; break;
-    case sizeof(short):	ealign = header.salign; break;
+    case sizeof(short):	ealign = salign; break;
     case sizeof(Int):	ealign = ialign; break;
     }
 }
@@ -322,9 +325,11 @@ bool Config::restore(int fd, int fd2)
     }
     header.version = rheader.version;
     if (memcmp(&header, &rheader, DUMP_TYPE) != 0 || rheader.zero1 != 0 ||
-	rheader.zero2 != 0 || rheader.zero3 != 0 || rheader.zero4 != 0 ||
-	rheader.zero5 != 0) {
+	rheader.zero2 != 0 || rheader.zero3 != 0 || rheader.zero4 != 0) {
 	EC->error("Bad or incompatible snapshot header");
+    }
+    if (rheader.vmversion > VERSION_VM_MINOR) {
+	EC->error("Incompatible VM version");
     }
     if (rheader.dflags & FLAGS_PARTIAL) {
 	SnapshotInfo h;
@@ -361,22 +366,21 @@ bool Config::restore(int fd, int fd2)
     if ((rheader.calign >> 4) != 0) {
 	EC->error("Cannot restore arrsize > 2");
     }
-    if ((rheader.salign >> 4) != 0) {
-	EC->error("Cannot restore Int size > 4");
-    }
+    rsalign = rheader.snalsz & 0xf;
+    rnsize = (UCHAR(rheader.snalsz) >> 4) + 4;
     rialign = rheader.ilalign & 0xf;
     rlalign = UCHAR(rheader.ilalign) >> 4;
-    rualign = (rusize == sizeof(short)) ? rheader.salign : rialign;
-    rtalign = (rtsize == sizeof(short)) ? rheader.salign : rialign;
-    rdalign = (rdsize == sizeof(short)) ? rheader.salign : rialign;
+    rualign = (rusize == sizeof(short)) ? rsalign : rialign;
+    rtalign = (rtsize == sizeof(short)) ? rsalign : rialign;
+    rdalign = (rdsize == sizeof(short)) ? rsalign : rialign;
     switch (resize) {
     case sizeof(char):	realign = rheader.calign; break;
-    case sizeof(short):	realign = rheader.salign; break;
+    case sizeof(short):	realign = rsalign; break;
     case sizeof(Int):	realign = rialign; break;
     }
     if (sizeof(uindex) < rusize || sizeof(ssizet) < rtsize ||
-	sizeof(Sector) < rdsize) {
-	EC->error("Cannot restore uindex, ssizet or sector of greater width");
+	sizeof(Sector) < rdsize || sizeof(LPCint) < rnsize) {
+	EC->error("Cannot restore uindex, ssizet, sector or LPCint of greater width");
     }
     if ((rheader.psize >> 4) > 1) {
 	EC->error("Cannot restore hindex > 1");	/* Hydra only */
@@ -386,7 +390,7 @@ bool Config::restore(int fd, int fd2)
     Swap::restore(fd, secsize);
     KFun::restore(fd);
     Object::restore(fd, rheader.dflags & FLAGS_PARTIAL);
-    Dataspace::initConv(conv_14, conv_16);
+    Dataspace::initConv(conv_14, conv_16, (sizeof(LPCint) != rnsize));
     Control::initConv(conv_14, conv_15, conv_16);
     if (conv_14) {
 	struct {
@@ -444,8 +448,8 @@ Uint Config::dsize(const char *layout)
 
 	case 's':	/* short */
 	    sz = rsz = sizeof(short);
-	    al = header.salign;
-	    ral = rheader.salign;
+	    al = salign;
+	    ral = rsalign;
 	    break;
 
 	case 'u':	/* uindex */
@@ -455,14 +459,23 @@ Uint Config::dsize(const char *layout)
 	    ral = rualign;
 	    break;
 
+	case 'I':	/* LPCint */
+	    if (sizeof(LPCint) == sizeof(Int)) {
 	case 'i':	/* Int */
-	    sz = rsz = sizeof(Int);
-	    al = ialign;
-	    ral = rialign;
-	    break;
-
-	case 'l':	/* Uuint */
-	    sz = rsz = sizeof(Uuint);
+		sz = rsz = sizeof(Int);
+		al = ialign;
+		ral = rialign;
+		break;
+	    } else if (sizeof(LPCint) > rnsize) {
+		sz = sizeof(LPCint);
+		rsz = sizeof(Int);
+		al = lalign;
+		ral = rialign;
+		break;
+	    }
+	    /* fall through */
+	case 'l':	/* int64_t */
+	    sz = rsz = sizeof(int64_t);
 	    al = lalign;
 	    ral = rlalign;
 	    break;
@@ -586,8 +599,8 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 		break;
 
 	    case 's':
-		i = ALGN(i, header.salign);
-		ri = ALGN(ri, rheader.salign);
+		i = ALGN(i, salign);
+		ri = ALGN(ri, rsalign);
 		buf[i + header.s[0]] = rbuf[ri + rheader.s[0]];
 		buf[i + header.s[1]] = rbuf[ri + rheader.s[1]];
 		i += sizeof(short);
@@ -608,8 +621,8 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 			buf[i + header.i[3]] = rbuf[ri + rheader.i[3]];
 		    }
 		} else {
-		    j = (UCHAR(rbuf[ri + rheader.s[0]] & rbuf[ri + rheader.s[1]]) == 0xff) ?
-			 -1 : 0;
+		    j = (UCHAR(rbuf[ri + rheader.s[0]] &
+			 rbuf[ri + rheader.s[1]]) == 0xff) ? -1 : 0;
 		    buf[i + header.i[0]] = j;
 		    buf[i + header.i[1]] = j;
 		    buf[i + header.i[2]] = rbuf[ri + rheader.s[0]];
@@ -619,17 +632,35 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 		ri += rusize;
 		break;
 
+	    case 'I':
+		if (sizeof(LPCint) == sizeof(Int)) {
 	    case 'i':
-		i = ALGN(i, ialign);
-		ri = ALGN(ri, rialign);
-		buf[i + header.i[0]] = rbuf[ri + rheader.i[0]];
-		buf[i + header.i[1]] = rbuf[ri + rheader.i[1]];
-		buf[i + header.i[2]] = rbuf[ri + rheader.i[2]];
-		buf[i + header.i[3]] = rbuf[ri + rheader.i[3]];
-		i += sizeof(Int);
-		ri += sizeof(Int);
-		break;
-
+		    i = ALGN(i, ialign);
+		    ri = ALGN(ri, rialign);
+		    buf[i + header.i[0]] = rbuf[ri + rheader.i[0]];
+		    buf[i + header.i[1]] = rbuf[ri + rheader.i[1]];
+		    buf[i + header.i[2]] = rbuf[ri + rheader.i[2]];
+		    buf[i + header.i[3]] = rbuf[ri + rheader.i[3]];
+		    i += sizeof(Int);
+		    ri += sizeof(Int);
+		    break;
+		} else if (sizeof(LPCint) != rnsize) {
+		    i = ALGN(i, lalign);
+		    ri = ALGN(ri, rialign);
+		    j = (rbuf[ri + rheader.i[0]] & 0x80) ? -1 : 0;
+		    buf[i + header.l[0]] = j;
+		    buf[i + header.l[1]] = j;
+		    buf[i + header.l[2]] = j;
+		    buf[i + header.l[3]] = j;
+		    buf[i + header.l[4]] = rbuf[ri + rheader.i[0]];
+		    buf[i + header.l[5]] = rbuf[ri + rheader.i[1]];
+		    buf[i + header.l[6]] = rbuf[ri + rheader.i[2]];
+		    buf[i + header.l[7]] = rbuf[ri + rheader.i[3]];
+		    i += sizeof(int64_t);
+		    ri += sizeof(Int);
+		    break;
+		}
+		/* fall through */
 	    case 'l':
 		i = ALGN(i, lalign);
 		ri = ALGN(ri, rlalign);
@@ -641,8 +672,8 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 		buf[i + header.l[5]] = rbuf[ri + rheader.l[5]];
 		buf[i + header.l[6]] = rbuf[ri + rheader.l[6]];
 		buf[i + header.l[7]] = rbuf[ri + rheader.l[7]];
-		i += sizeof(Uuint);
-		ri += sizeof(Uuint);
+		i += sizeof(int64_t);
+		ri += sizeof(int64_t);
 		break;
 
 	    case 't':
@@ -682,8 +713,8 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 			buf[i + header.i[3]] = rbuf[ri + rheader.i[3]];
 		    }
 		} else {
-		    j = (UCHAR(rbuf[ri + rheader.s[0]] & rbuf[ri + rheader.s[1]]) == 0xff) ?
-			 -1 : 0;
+		    j = (UCHAR(rbuf[ri + rheader.s[0]] &
+			 rbuf[ri + rheader.s[1]]) == 0xff) ? -1 : 0;
 		    buf[i + header.i[0]] = j;
 		    buf[i + header.i[1]] = j;
 		    buf[i + header.i[2]] = rbuf[ri + rheader.s[0]];
@@ -696,6 +727,41 @@ Uint Config::dconv(char *buf, char *rbuf, const char *layout, Uint n)
 	    case 'e':
 		i = ALGN(i, ealign);
 		ri = ALGN(ri, realign);
+		if (sizeof(eindex) == resize) {
+		    switch (sizeof(eindex)) {
+		    case sizeof(char):
+			buf[i] = rbuf[ri];
+			break;
+
+		    case sizeof(short):
+			buf[i + header.s[0]] = rbuf[ri + rheader.s[0]];
+			buf[i + header.s[1]] = rbuf[ri + rheader.s[1]];
+			break;
+
+		    case sizeof(Int):
+			buf[i + header.i[0]] = rbuf[ri + rheader.i[0]];
+			buf[i + header.i[1]] = rbuf[ri + rheader.i[1]];
+			buf[i + header.i[2]] = rbuf[ri + rheader.i[2]];
+			buf[i + header.i[3]] = rbuf[ri + rheader.i[3]];
+			break;
+		    }
+		} else if (sizeof(eindex) == sizeof(short)) {
+		    buf[i + header.s[0]] = (UCHAR(rbuf[ri]) == 0xff) ? -1 : 0;
+		    buf[i + header.s[1]] = rbuf[ri];
+		} else if (resize == sizeof(char)) {
+		    j = (UCHAR(rbuf[ri]) == 0xff) ? -1 : 0;
+		    buf[i + header.i[0]] = j;
+		    buf[i + header.i[1]] = j;
+		    buf[i + header.i[2]] = j;
+		    buf[i + header.i[3]] = rbuf[ri];
+		} else {
+		    j = (UCHAR(rbuf[ri + rheader.s[0]] &
+			 rbuf[ri + rheader.s[1]]) == 0xff) ? -1 : 0;
+		    buf[i + header.i[0]] = j;
+		    buf[i + header.i[1]] = j;
+		    buf[i + header.i[2]] = rbuf[ri + rheader.s[0]];
+		    buf[i + header.i[3]] = rbuf[ri + rheader.s[1]];
+		}
 		i += sizeof(eindex);
 		ri += resize;
 		break;
@@ -786,9 +852,9 @@ void Config::dread(int fd, char *buf, const char *layout, Uint n)
 # define MAX_STRINGS	32
 
 static char *hotboot[MAX_STRINGS], *dirs[MAX_STRINGS];
-static char *modules[MAX_STRINGS + 1], *modconf[MAX_STRINGS + 1];
-static void (*mfdlist[MAX_STRINGS + 1])(int*, int);
-static void (*mfinish[MAX_STRINGS + 1])(int);
+static char *modules[MAX_STRINGS], *modconf[MAX_STRINGS];
+static void (*mfdlist[MAX_STRINGS])(int*, int);
+static void (*mfinish[MAX_STRINGS])(int);
 static char *bhosts[MAX_PORTS], *dhosts[MAX_PORTS], *thosts[MAX_PORTS];
 static unsigned short bports[MAX_PORTS], dports[MAX_PORTS], tports[MAX_PORTS];
 static bool attached[MAX_PORTS];
@@ -799,7 +865,7 @@ static int ntports, nbports, ndports;
  */
 void Config::err(const char *err)
 {
-    EC->message("Config error, line %u: %s\012", TokenBuf::line(), err);/* LF */
+    EC->message("Config error, line %u: %s\012", PP->line(), err);	/* LF */
 }
 
 /*
@@ -820,7 +886,7 @@ bool Config::config()
     memset(dirs, '\0', sizeof(dirs));
     strs = (char **) NULL;
 
-    while ((c=PP::gettok()) != EOF) {
+    while ((c=PP->gettok()) != EOF) {
 	if (c != IDENTIFIER) {
 	    err("option expected");
 	    return FALSE;
@@ -845,12 +911,12 @@ bool Config::config()
 	    }
 	}
 
-	if (PP::gettok() != '=') {
+	if (PP->gettok() != '=') {
 	    err("'=' expected");
 	    return FALSE;
 	}
 
-	if ((c=PP::gettok()) != conf[m].type) {
+	if ((c=PP->gettok()) != conf[m].type) {
 	    if (c != INT_CONST && c != STRING_CONST && c != '(') {
 		err("syntax error");
 		return FALSE;
@@ -909,7 +975,7 @@ bool Config::config()
 	    break;
 
 	case '(':
-	    if (PP::gettok() != '{') {
+	    if (PP->gettok() != '{') {
 		err("'{' expected");
 		return FALSE;
 	    }
@@ -919,7 +985,7 @@ bool Config::config()
 	    case INCLUDE_DIRS:	strs = dirs; break;
 	    }
 	    for (;;) {
-		if (PP::gettok() != STRING_CONST) {
+		if (PP->gettok() != STRING_CONST) {
 		    err("string expected");
 		    return FALSE;
 		}
@@ -931,7 +997,7 @@ bool Config::config()
 		strs[l] = strcpy(ALLOC(char, strlen(yytext) + 1), yytext);
 		l++;
 		MM->dynamicMode();
-		if ((c=PP::gettok()) == '}') {
+		if ((c=PP->gettok()) == '}') {
 		    break;
 		}
 		if (c != ',') {
@@ -939,7 +1005,7 @@ bool Config::config()
 		    return FALSE;
 		}
 	    }
-	    if (PP::gettok() != ')') {
+	    if (PP->gettok() != ')') {
 		err("')' expected");
 		return FALSE;
 	    }
@@ -947,12 +1013,12 @@ bool Config::config()
 	    break;
 
 	case '[':
-	    if (PP::gettok() != '[') {
+	    if (PP->gettok() != '[') {
 		err("'[' expected");
 		return FALSE;
 	    }
 	    l = 0;
-	    if ((c=PP::gettok()) != ']') {
+	    if ((c=PP->gettok()) != ']') {
 		switch (m) {
 		case BINARY_PORT:
 		    strs = bhosts;
@@ -986,11 +1052,11 @@ bool Config::config()
 					 yytext);
 			MM->dynamicMode();
 		    }
-		    if (PP::gettok() != ':') {
+		    if (PP->gettok() != ':') {
 			err("':' expected");
 			return FALSE;
 		    }
-		    if (PP::gettok() != INT_CONST) {
+		    if (PP->gettok() != INT_CONST) {
 			err("integer expected");
 			return FALSE;
 		    }
@@ -999,17 +1065,17 @@ bool Config::config()
 			return FALSE;
 		    }
 		    ports[l++] = yylval.number;
-		    if ((c=PP::gettok()) == ']') {
+		    if ((c=PP->gettok()) == ']') {
 			break;
 		    }
 		    if (c != ',') {
 			err("',' expected");
 			return FALSE;
 		    }
-		    c = PP::gettok();
+		    c = PP->gettok();
 		}
 	    }
-	    if (PP::gettok() != ')') {
+	    if (PP->gettok() != ')') {
 		err("')' expected");
 		return FALSE;
 	    }
@@ -1029,12 +1095,12 @@ bool Config::config()
 	    break;
 
 	case ']':
-	    if (PP::gettok() != '[') {
+	    if (PP->gettok() != '[') {
 		err("'[' expected");
 		return FALSE;
 	    }
 	    l = 0;
-	    if ((c=PP::gettok()) != ']') {
+	    if ((c=PP->gettok()) != ']') {
 		for (;;) {
 		    if (l == MAX_STRINGS - 1) {
 			err("mapping too large");
@@ -1048,11 +1114,11 @@ bool Config::config()
 		    modules[l] = strcpy(ALLOC(char, strlen(yytext) + 1),
 					yytext);
 		    MM->dynamicMode();
-		    if (PP::gettok() != ':') {
+		    if (PP->gettok() != ':') {
 			err("':' expected");
 			return FALSE;
 		    }
-		    if (PP::gettok() != STRING_CONST) {
+		    if (PP->gettok() != STRING_CONST) {
 			err("string expected");
 			return FALSE;
 		    }
@@ -1060,17 +1126,17 @@ bool Config::config()
 		    modconf[l++] = strcpy(ALLOC(char, strlen(yytext) + 1),
 					  yytext);
 		    MM->dynamicMode();
-		    if ((c=PP::gettok()) == ']') {
+		    if ((c=PP->gettok()) == ']') {
 			break;
 		    }
 		    if (c != ',') {
 			err("',' expected");
 			return FALSE;
 		    }
-		    c = PP::gettok();
+		    c = PP->gettok();
 		}
 	    }
-	    if (PP::gettok() != ')') {
+	    if (PP->gettok() != ')') {
 		err("')' expected");
 		return FALSE;
 	    }
@@ -1078,7 +1144,11 @@ bool Config::config()
 	    break;
 	}
 	conf[m].set = TRUE;
-	if (PP::gettok() != ';') {
+	if (m == CACHE_SIZE) {
+	    err("option 'cache_size' is deprecated");
+	}
+
+	if (PP->gettok() != ';') {
 	    err("';' expected");
 	    return FALSE;
 	}
@@ -1089,7 +1159,8 @@ bool Config::config()
 	    l != DATAGRAM_PORT && l != DATAGRAM_USERS) {
 	    char buffer[64];
 
-	    sprintf(buffer, "unspecified option %s", conf[l].name);
+	    snprintf(buffer, sizeof(buffer), "unspecified option %s",
+		     conf[l].name);
 	    err(buffer);
 	    return FALSE;
 	}
@@ -1222,7 +1293,7 @@ bool Config::includes()
 
     /* create status.h file */
     obuf = buf;
-    sprintf(buffer, "%s/status.h", dirs[0]);
+    snprintf(buffer, sizeof(buffer), "%s/status.h", dirs[0]);
     if (!open(buffer)) {
 	return FALSE;
     }
@@ -1256,6 +1327,7 @@ bool Config::includes()
     puts("# define ST_DATAGRAMPORTS 24\t/* datagram ports */\012");
     puts("# define ST_TELNETPORTS\t25\t/* telnet ports */\012");
     puts("# define ST_BINARYPORTS\t26\t/* binary ports */\012");
+    puts("# define ST_NUSERS\t27\t/* # users */\012");
 
     puts("\012# define O_COMPILETIME\t0\t/* time of compilation */\012");
     puts("# define O_PROGSIZE\t1\t/* program size of object */\012");
@@ -1264,6 +1336,7 @@ bool Config::includes()
     puts("# define O_CALLOUTS\t4\t/* callouts in object */\012");
     puts("# define O_INDEX\t5\t/* unique ID for master object */\012");
     puts("# define O_UNDEFINED\t6\t/* undefined functions */\012");
+    puts("# define O_SPECIAL\t7\t/* object has special role */\012");
 
     puts("\012# define CO_HANDLE\t0\t/* callout handle */\012");
     puts("# define CO_FUNCTION\t1\t/* function name */\012");
@@ -1274,33 +1347,50 @@ bool Config::includes()
     }
 
     /* create type.h file */
-    sprintf(buffer, "%s/type.h", dirs[0]);
+    snprintf(buffer, sizeof(buffer), "%s/type.h", dirs[0]);
     if (!open(buffer)) {
 	return FALSE;
     }
     puts("/*\012 * This file gives definitions for the value returned ");
     puts("by the\012 * typeof() kfun.  It is automatically generated ");
     puts("by DGD on startup.\012 */\012\012");
-    sprintf(buffer, "# define T_NIL\t\t%d\012", T_NIL);
+    snprintf(buffer, sizeof(buffer), "# define T_NIL\t\t%d\012", T_NIL);
     puts(buffer);
-    sprintf(buffer, "# define T_INT\t\t%d\012", T_INT);
+    snprintf(buffer, sizeof(buffer), "# define T_INT\t\t%d\012", T_INT);
     puts(buffer);
-    sprintf(buffer, "# define T_FLOAT\t%d\012", T_FLOAT);
+    snprintf(buffer, sizeof(buffer), "# define T_FLOAT\t%d\012", T_FLOAT);
     puts(buffer);
-    sprintf(buffer, "# define T_STRING\t%d\012", T_STRING);
+    snprintf(buffer, sizeof(buffer), "# define T_STRING\t%d\012", T_STRING);
     puts(buffer);
-    sprintf(buffer, "# define T_OBJECT\t%d\012", T_OBJECT);
+    snprintf(buffer, sizeof(buffer), "# define T_OBJECT\t%d\012", T_OBJECT);
     puts(buffer);
-    sprintf(buffer, "# define T_ARRAY\t%d\012", T_ARRAY);
+    snprintf(buffer, sizeof(buffer), "# define T_ARRAY\t%d\012", T_ARRAY);
     puts(buffer);
-    sprintf(buffer, "# define T_MAPPING\t%d\012", T_MAPPING);
+    snprintf(buffer, sizeof(buffer), "# define T_MAPPING\t%d\012", T_MAPPING);
     puts(buffer);
     if (!close()) {
 	return FALSE;
     }
 
+    /* create connect.h file */
+    snprintf(buffer, sizeof(buffer), "%s/connect.h", dirs[0]);
+    if (!open(buffer)) {
+	return FALSE;
+    }
+    puts("/*\012 * This file defines the error codes passed to ");
+    puts("unconnected().  It is\012 * automatically generated by DGD on ");
+    puts("startup.\012 */\012\012");
+    puts("# define CONNECT_FAILURE\t0\t/* unspecified failure */\012");
+    puts("# define CONNECT_REFUSED\t1\t/* connection refused */\012");
+    puts("# define CONNECT_HOST_UNREACH\t2\t/* host unreachable */\012");
+    puts("# define CONNECT_NET_UNREACH\t3\t/* network unreachable */\012");
+    puts("# define CONNECT_TIMEOUT\t4\t/* connection timed out */\012");
+    if (!close()) {
+	return FALSE;
+    }
+
     /* create limits.h file */
-    sprintf(buffer, "%s/limits.h", dirs[0]);
+    snprintf(buffer, sizeof(buffer), "%s/limits.h", dirs[0]);
     if (!open(buffer)) {
 	return FALSE;
     }
@@ -1310,14 +1400,19 @@ bool Config::includes()
     puts("# define CHAR_BIT\t\t8\t\t/* # bits in character */\012");
     puts("# define CHAR_MIN\t\t0\t\t/* min character value */\012");
     puts("# define CHAR_MAX\t\t255\t\t/* max character value */\012\012");
+# ifdef LARGENUM
+    puts("# define INT_MIN\t\t0x8000000000000000\t/* -INT_MAX - 1 */\012");
+    puts("# define INT_MAX\t\t9223372036854775807\t/* max integer value */\012");
+# else
     puts("# define INT_MIN\t\t0x80000000\t/* -2147483648 */\012");
     puts("# define INT_MAX\t\t2147483647\t/* max integer value */\012");
+# endif
     if (!close()) {
 	return FALSE;
     }
 
     /* create float.h file */
-    sprintf(buffer, "%s/float.h", dirs[0]);
+    snprintf(buffer, sizeof(buffer), "%s/float.h", dirs[0]);
     if (!open(buffer)) {
 	return FALSE;
     }
@@ -1325,6 +1420,15 @@ bool Config::includes()
     puts("automatically\012 * generated by DGD on startup.\012 */\012\012");
     puts("# define FLT_RADIX\t2\t\t\t/* binary */\012");
     puts("# define FLT_ROUNDS\t1\t\t\t/* round to nearest */\012");
+# ifdef LARGENUM
+    puts("# define FLT_EPSILON\t2.220446049250313E-16\t/* smallest x: 1.0 + x != 1.0 */\012");
+    puts("# define FLT_DIG\t15\t\t\t/* decimal digits of precision*/\012");
+    puts("# define FLT_MANT_DIG\t53\t\t\t/* binary digits of precision */\012");
+    puts("# define FLT_MIN\t2.2250738585072014E-308\t/* positive minimum */\012");
+    puts("# define FLT_MIN_EXP\t(-1021)\t\t\t/* minimum binary exponent */\012");
+    puts("# define FLT_MIN_10_EXP\t(-307)\t\t\t/* minimum decimal exponent */\012");
+    puts("# define FLT_MAX\t1.7976931348623157E+308\t/* positive maximum */\012");
+# else
     puts("# define FLT_EPSILON\t7.2759576142E-12\t/* smallest x: 1.0 + x != 1.0 */\012");
     puts("# define FLT_DIG\t11\t\t\t/* decimal digits of precision*/\012");
     puts("# define FLT_MANT_DIG\t37\t\t\t/* binary digits of precision */\012");
@@ -1332,6 +1436,7 @@ bool Config::includes()
     puts("# define FLT_MIN_EXP\t(-1021)\t\t\t/* minimum binary exponent */\012");
     puts("# define FLT_MIN_10_EXP\t(-307)\t\t\t/* minimum decimal exponent */\012");
     puts("# define FLT_MAX\t1.79769313485E+308\t/* positive maximum */\012");
+# endif
     puts("# define FLT_MAX_EXP\t1024\t\t\t/* maximum binary exponent */\012");
     puts("# define FLT_MAX_10_EXP\t308\t\t\t/* maximum decimal exponent */\012");
     if (!close()) {
@@ -1339,7 +1444,7 @@ bool Config::includes()
     }
 
     /* create trace.h file */
-    sprintf(buffer, "%s/trace.h", dirs[0]);
+    snprintf(buffer, sizeof(buffer), "%s/trace.h", dirs[0]);
     if (!open(buffer)) {
 	return FALSE;
     }
@@ -1357,7 +1462,7 @@ bool Config::includes()
     }
 
     /* create kfun.h file */
-    sprintf(buffer, "%s/kfun.h", dirs[0]);
+    snprintf(buffer, sizeof(buffer), "%s/kfun.h", dirs[0]);
     if (!open(buffer)) {
 	return FALSE;
     }
@@ -1366,8 +1471,8 @@ bool Config::includes()
     puts("startup.\012 */\012\012");
     for (i = KF_BUILTINS; i < nkfun; i++) {
 	if (!isdigit(kftab[i].name[0])) {
-	    sprintf(buffer, "# define kf_%s\t\t%d\012", kftab[i].name,
-		    kftab[i].version);
+	    snprintf(buffer, sizeof(buffer), "# define kf_%s\t\t%d\012",
+		     kftab[i].name, kftab[i].version);
 	    for (p = buffer + 9; *p != '\0'; p++) {
 		if (*p == '.') {
 		    *p = '_';
@@ -1381,7 +1486,7 @@ bool Config::includes()
     puts("\012\012/*\012 * Supported ciphers and hashing algorithms.\012 */");
     puts("\012\012# define ENCRYPT_CIPHERS\t");
     for (i = 0; ; ) {
-	sprintf(buffer, "\"%s\"", kfenc[i].name);
+	snprintf(buffer, sizeof(buffer), "\"%s\"", kfenc[i].name);
 	puts(buffer);
 	if (++i == ne) {
 	    break;
@@ -1390,7 +1495,7 @@ bool Config::includes()
     }
     puts("\012# define DECRYPT_CIPHERS\t");
     for (i = 0; ; ) {
-	sprintf(buffer, "\"%s\"", kfdec[i].name);
+	snprintf(buffer, sizeof(buffer), "\"%s\"", kfdec[i].name);
 	puts(buffer);
 	if (++i == nd) {
 	    break;
@@ -1399,7 +1504,7 @@ bool Config::includes()
     }
     puts("\012# define HASH_ALGORITHMS\t");
     for (i = 0; ; ) {
-	sprintf(buffer, "\"%s\"", kfhsh[i].name);
+	snprintf(buffer, sizeof(buffer), "\"%s\"", kfhsh[i].name);
 	puts(buffer);
 	if (++i == nh) {
 	    break;
@@ -1416,26 +1521,25 @@ bool Config::includes()
  * initialize the driver
  */
 bool Config::init(char *configfile, char *snapshot, char *snapshot2,
-		  char *module, Sector *fragment)
+		  Sector *fragment)
 {
     char buf[STRINGSZ];
     int fd, fd2, i;
     bool init;
-    Sector cache;
 
     fd = fd2 = -1;
 
     /*
      * process config file
      */
-    if (!PP::init(path_native(buf, configfile), (char **) NULL,
-		  (String **) NULL, 0, 0)) {
+    if (!PP->init(path_native(buf, configfile), (char **) NULL, (char *) NULL,
+		  0, 0)) {
 	EC->message("Config error: cannot open config file\012");	/* LF */
 	MM->finish();
 	return FALSE;
     }
     init = config();
-    PP::clear();
+    PP->clear();
     MM->purge();
     if (!init) {
 	MM->finish();
@@ -1465,11 +1569,25 @@ bool Config::init(char *configfile, char *snapshot, char *snapshot2,
 
     MM->staticMode();
 
-    /* remove previously added kfuns */
-    KFun::clear();
+    /* change directory */
+    if (P_chdir(path_native(buf, conf[DIRECTORY].str)) < 0) {
+	EC->message("Config error: bad base directory \"%s\"\012",	/* LF */
+		conf[DIRECTORY].str);
+	if (snapshot2 != (char *) NULL) {
+	    P_close(fd2);
+	}
+	if (snapshot != (char *) NULL) {
+	    P_close(fd);
+	}
+	MM->finish();
+	return FALSE;
+    }
 
+    /* prepare to add new kfuns */
+    KFun::clear();
     memset(mfdlist, '\0', MAX_STRINGS * sizeof(void (*)(int*, int)));
     memset(mfinish, '\0', MAX_STRINGS * sizeof(void (*)(int)));
+
     for (i = 0; modules[i] != NULL; i++) {
 	if (!Ext::load(modules[i], modconf[i], &mfdlist[i], &mfinish[i])) {
 	    EC->message("Config error: cannot load runtime extension \"%s\"\012",
@@ -1486,40 +1604,9 @@ bool Config::init(char *configfile, char *snapshot, char *snapshot2,
 	    return FALSE;
 	}
     }
-    if (module != (char *) NULL &&
-	!Ext::load(modules[i] = module, NULL, &mfdlist[i], &mfinish[i])) {
-	EC->message("Config error: cannot load runtime extension \"%s\"\012",
-		    module); /* LF*/
-	if (snapshot2 != (char *) NULL) {
-	    P_close(fd2);
-	}
-	if (snapshot != (char *) NULL) {
-	    P_close(fd);
-	}
-	modFinish(TRUE);
-	Ext::finish();
-	MM->finish();
-	return FALSE;
-    }
 
     /* initialize kfuns */
     KFun::init();
-
-    /* change directory */
-    if (P_chdir(path_native(buf, conf[DIRECTORY].str)) < 0) {
-	EC->message("Config error: bad base directory \"%s\"\012",	/* LF */
-		conf[DIRECTORY].str);
-	if (snapshot2 != (char *) NULL) {
-	    P_close(fd2);
-	}
-	if (snapshot != (char *) NULL) {
-	    P_close(fd);
-	}
-	modFinish(TRUE);
-	Ext::finish();
-	MM->finish();
-	return FALSE;
-    }
 
     /* initialize communications */
     if (!Comm::init((int) conf[USERS].num,
@@ -1549,8 +1636,7 @@ bool Config::init(char *configfile, char *snapshot, char *snapshot2,
 		 (Uint) conf[DUMP_INTERVAL].num);
 
     /* initialize swap device */
-    cache = (Sector) ((conf[CACHE_SIZE].set) ? conf[CACHE_SIZE].num : 100);
-    Swap::init(conf[SWAP_FILE].str, (Sector) conf[SWAP_SIZE].num, cache,
+    Swap::init(conf[SWAP_FILE].str, (Sector) conf[SWAP_SIZE].num,
 	       (unsigned int) conf[SECTOR_SIZE].num);
 
     /* initialize swapped data handler */
@@ -1752,7 +1838,7 @@ void Config::putval(Value *v, size_t n)
 {
     Float f1, f2;
 
-    if (n <= 0x7fffffffL) {
+    if (n <= LPCINT_MAX) {
 	PUT_INTVAL(v, n);
     } else {
 	Float::itof(n >> 31, &f1);
@@ -1766,7 +1852,7 @@ void Config::putval(Value *v, size_t n)
 /*
  * return resource usage information
  */
-bool Config::statusi(Frame *f, Int idx, Value *v)
+bool Config::statusi(Frame *f, LPCint idx, Value *v)
 {
     const char *version;
     uindex ncoshort, ncolong;
@@ -1902,6 +1988,10 @@ bool Config::statusi(Frame *f, Int idx, Value *v)
 	}
 	break;
 
+    case 27:	/* ST_NUSERS */
+	PUT_INTVAL(v, Comm::numUsers());
+	break;
+
     default:
 	return FALSE;
     }
@@ -1915,13 +2005,13 @@ bool Config::statusi(Frame *f, Int idx, Value *v)
 Array *Config::status(Frame *f)
 {
     Value *v;
-    Int i;
+    LPCint i;
     Array *a;
 
     try {
 	EC->push();
-	a = Array::createNil(f->data, 27);
-	for (i = 0, v = a->elts; i < 27; i++, v++) {
+	a = Array::createNil(f->data, 28);
+	for (i = 0, v = a->elts; i < 28; i++, v++) {
 	    statusi(f, i, v);
 	}
 	EC->pop();
@@ -1937,7 +2027,7 @@ Array *Config::status(Frame *f)
 /*
  * return object resource usage information
  */
-bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
+bool Config::objecti(Dataspace *data, Object *obj, LPCint idx, Value *v)
 {
     Control *ctrl;
     Object *prog;
@@ -1968,11 +2058,11 @@ bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
 
     case 4:	/* O_CALLOUTS */
 	if (O_HASDATA(obj)) {
-	    a = data->listCallouts(obj->dataspace());
+	    a = obj->dataspace()->listCallouts(data);
 	    if (a != (Array *) NULL) {
 		PUT_ARRVAL(v, a);
 	    } else {
-		*v = Value::nil;
+		*v = nil;
 	    }
 	} else {
 	    PUT_ARRVAL(v, Array::create(data, 0));
@@ -1988,8 +2078,12 @@ bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
 	if (ctrl->flags & CTRL_UNDEFINED) {
 	    PUT_MAPVAL(v, ctrl->undefined(data));
 	} else {
-	    *v = Value::nil;
+	    *v = nil;
 	}
+	break;
+
+    case 7:	/* O_SPECIAL */
+	PUT_INTVAL(v, (obj->flags & O_SPECIAL) != 0);
 	break;
 
     default:
@@ -2005,13 +2099,13 @@ bool Config::objecti(Dataspace *data, Object *obj, Int idx, Value *v)
 Array *Config::object(Dataspace *data, Object *obj)
 {
     Value *v;
-    Int i;
+    LPCint i;
     Array *a;
 
-    a = Array::createNil(data, 7);
+    a = Array::createNil(data, 8);
     try {
 	EC->push();
-	for (i = 0, v = a->elts; i < 7; i++, v++) {
+	for (i = 0, v = a->elts; i < 8; i++, v++) {
 	    objecti(data, obj, i, v);
 	}
 	EC->pop();
@@ -2026,17 +2120,20 @@ Array *Config::object(Dataspace *data, Object *obj)
 
 
 /*
- * retrieve an Int from a string (utility function)
+ * retrieve an LPCint from a string (utility function)
  */
-Int strtoint(char **str)
+LPCint strtoint(char **str)
 {
     char *p;
-    Int i;
-    Int sign;
+    LPCint i;
+    LPCint sign;
 
     p = *str;
     if (*p == '-') {
 	p++;
+	if (!isdigit(*p)) {
+	    return 0;
+	}
 	sign = -1;
     } else {
 	sign = 1;
@@ -2044,11 +2141,11 @@ Int strtoint(char **str)
 
     i = 0;
     while (isdigit(*p)) {
-	if ((Uint) i > (Uint) 214748364L) {
+	if ((LPCuint) i > (LPCuint) (LPCINT_MAX / 10)) {
 	    return 0;
 	}
 	i = i * 10 + *p++ - '0';
-	if (i < 0 && ((Uint) i != (Uint) 0x80000000L || sign > 0)) {
+	if (i < 0 && ((LPCuint) i != (LPCuint) LPCINT_MIN || sign > 0)) {
 	    return 0;
 	}
     }

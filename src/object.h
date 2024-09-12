@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -23,44 +23,40 @@
 # define OACC_READ		0x00	/* read access */
 # define OACC_MODIFY		0x01	/* write access */
 
-class Object : public Hashtab::Entry {
+class Object : public Hash::Entry {
 public:
     Object *clone();
     void lightWeight();
-    void upgrade(Control*, Frame*);
-    void upgraded(Object*);
-    void del(Frame*);
+    void upgrade(Control *ctrl, Frame *f);
+    void upgraded(Object *tmpl);
+    void del(Frame *f);
 
-    const char *objName(char*);
+    const char *objName(char *name);
     Control *control();
     Dataspace *dataspace();
 
-    static void init(unsigned int, Uint);
+    static void init(unsigned int n, Uint interval);
     static void newPlane();
     static void commitPlane();
     static void discardPlane();
 
-    static Object *oread(unsigned int index) {
-	return (BTST(ocmap, index)) ? access(index, OACC_READ) : &objTable[index];
-    }
-    static Object *owrite(unsigned int index) {
-	return (!base) ? access(index, OACC_MODIFY) : &objTable[index];
-    }
-    static Object *create(char*, Control*);
-    static const char *builtinName(Int);
-    static Object *find(char*, int);
+    static Object *access(unsigned int index, int access);
+
+    static Object *create(char *name, Control *ctrl);
+    static const char *builtinName(LPCint type);
+    static Object *find(char *name, int access);
 
     static bool space();
     static void clean();
     static uindex ocount();
     static uindex dobjects();
-    static bool save(int, bool);
-    static void restore(int, bool);
-    static bool copy(Uint);
+    static bool save(int fd, bool incr);
+    static void restore(int fd, bool part);
+    static bool copy(Uint time);
 
     static void swapout();
-    static void dumpState(bool);
-    static void finish(bool);
+    static void dumpState(bool incr);
+    static void finish(bool boot);
 
     char flags;			/* object status */
     eindex etabi;		/* index in external table */
@@ -78,35 +74,15 @@ public:
     Sector cfirst;		/* first sector of control block */
     Sector dfirst;		/* first sector of dataspace block */
 
-    static Object *objTable;
-    static bool swap, dump, incr, stop, boot;
-    static Uint objDestrCount;
-
 private:
     void remove(Frame *f);
     void restoreObject(bool cactive, bool dactive);
     bool purgeUpgrades();
 
-    static Object *access(unsigned int, int);
     static Object *alloc();
-    static void sweep(uindex);
-    static Uint recount(uindex);
+    static void sweep(uindex n);
+    static Uint recount(uindex n);
     static void cleanUpgrades();
-
-    static Uint *ocmap;
-    static bool base;
-    static bool rcount;
-    static uindex otabsize;
-    static uindex uobjects;
-    static Uint *omap;
-    static Uint *counttab;
-    static Uint *insttab;
-    static Object *upgradeList;
-    static uindex ndobject, dobject;
-    static uindex mobjects;
-    static uindex dchunksz;
-    static Uint dinterval;
-    static Uint dtime;
 };
 
 # define O_MASTER		0x01
@@ -122,9 +98,11 @@ private:
 
 # define OBJ_LAYOUT		"xceuuuiiippdd"
 
-# define OBJ(i)			(&Object::objTable[i])
-# define OBJR(i)		(Object::oread((i)))
-# define OBJW(i)		(Object::owrite((i)))
+# define OBJ(i)			(&objTable[i])
+# define OBJR(i)		((BTST(ocmap, (i))) ? \
+				  Object::access((i), OACC_READ) : OBJ((i)))
+# define OBJW(i)		((!obase) ? \
+				  Object::access((i), OACC_MODIFY) : OBJ((i)))
 
 # define O_UPGRADING(o)		((o)->cref > (o)->ref)
 # define O_INHERITED(o)		((o)->ref - 1 != (o)->cref)
@@ -132,6 +110,12 @@ private:
 				 (o)->dfirst != SW_UNUSED)
 
 # define OBJ_NONE		UINDEX_MAX
+
+extern Object	*objTable;
+extern Uint	*ocmap;
+extern bool	 obase, swap, dump, incr, stop, boot;
+extern Uint	 objDestrCount;
+
 
 # ifdef CLOSURES
 # define BUILTIN_FUNCTION	0

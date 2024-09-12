@@ -1,7 +1,7 @@
 #
 # This file is part of DGD, https://github.com/dworkin/dgd
 # Copyright (C) 1993-2010 Dworkin B.V.
-# Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+# Copyright (C) 2010-2023 DGD Authors (see the commit log for details)
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -27,10 +27,10 @@ all:
 dgd:	$(OBJ)
 	@for i in $(OBJ); do echo comp/$$i; done > dgd
 
-parser.cpp dparser.h: parser.y
+parser.cpp parser.h: parser.y
 	$(YACC) -d parser.y
 	mv y.tab.c parser.cpp
-	mv y.tab.h dparser.h
+	mv y.tab.h parser.h
 
 clean:
 	rm -f dgd a.out $(OBJ)
@@ -40,14 +40,14 @@ $(OBJ): ../dgd.h ../config.h ../host.h ../error.h ../alloc.h ../str.h
 $(OBJ): ../array.h ../object.h ../hash.h ../swap.h ../xfloat.h ../interpret.h
 node.o parser.o control.o optimize.o codegen.o compile.o: ../data.h
 compile.o: ../path.h
+codegen.o: ../ext.h
 
-node.o parser.o compile.o: ../lex/macro.h ../lex/token.h
-parser.o compile.o: ../lex/ppcontrol.h
+node.o parser.o compile.o: ../lex/ppcontrol.h
 
 parser.o control.o optimize.o codegen.o: ../kfun/table.h
 
 $(OBJ): comp.h node.h
-parser.o control.o optimize.o codegen.o compile.o: dcontrol.h
+parser.o control.o optimize.o codegen.o compile.o: control.h
 codegen.o compile.o: codegen.h
 parser.o control.o optimize.o codegen.o compile.o: compile.h
 optimize.o compile.o: optimize.h

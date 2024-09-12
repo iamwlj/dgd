@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2023 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -25,7 +25,7 @@
 
 # define STR_CHUNK	128
 
-struct StrHash : public Hashtab::Entry, public ChunkAllocated {
+struct StrHash : public Hash::Entry, public ChunkAllocated {
     String *str;		/* string entry */
     Uint index;			/* building index */
 };
@@ -33,7 +33,7 @@ struct StrHash : public Hashtab::Entry, public ChunkAllocated {
 static Chunk<String, STR_CHUNK> schunk;
 static Chunk<StrHash, STR_CHUNK> hchunk;
 
-static Hashtab *sht;		/* string merge table */
+static Hash::Hashtab *sht;		/* string merge table */
 
 
 String::String(const char *text, long len)
@@ -64,9 +64,9 @@ String *String::alloc(const char *text, long len)
 /*
  * create a new string with size check
  */
-String *String::create(const char *text, long len)
+String *String::create(const char *text, LPCint len)
 {
-    if (len > (unsigned long) MAX_STRLEN) {
+    if (len > (LPCint) MAX_STRLEN) {
 	EC->error("String too long");
     }
     return alloc(text, len);
@@ -96,7 +96,7 @@ void String::clean()
  */
 void String::merge()
 {
-    sht = Hashtab::create(STRMERGETABSZ, STRMERGEHASHSZ, FALSE);
+    sht = HM->create(STRMERGETABSZ, STRMERGEHASHSZ, FALSE);
 }
 
 /*
@@ -120,7 +120,7 @@ Uint String::put(Uint n)
 	     * Not in the hash table. Make a new entry.
 	     */
 	    s = *h = chunknew (hchunk) StrHash;
-	    s->next = (Hashtab::Entry *) NULL;
+	    s->next = (Hash::Entry *) NULL;
 	    s->name = text;
 	    s->str = this;
 	    s->index = n;
@@ -139,11 +139,11 @@ Uint String::put(Uint n)
  */
 void String::clear()
 {
-    if (sht != (Hashtab *) NULL) {
+    if (sht != (Hash::Hashtab *) NULL) {
 	delete sht;
 
 	hchunk.clean();
-	sht = (Hashtab *) NULL;
+	sht = (Hash::Hashtab *) NULL;
     }
 }
 
@@ -188,7 +188,7 @@ String *String::add(String *str)
 {
     String *s;
 
-    s = create((char *) NULL, (long) len + str->len);
+    s = create((char *) NULL, (LPCint) len + str->len);
     memcpy(s->text, text, len);
     memcpy(s->text + len, str->text, str->len);
 
@@ -198,9 +198,9 @@ String *String::add(String *str)
 /*
  * index a string
  */
-ssizet String::index(long l)
+ssizet String::index(LPCint l)
 {
-    if (l < 0 || l >= (long) len) {
+    if (l < 0 || l >= (LPCint) len) {
 	EC->error("String index out of range");
     }
 
@@ -210,9 +210,9 @@ ssizet String::index(long l)
 /*
  * check a string subrange
  */
-void String::checkRange(long l1, long l2)
+void String::checkRange(LPCint l1, LPCint l2)
 {
-    if (l1 < 0 || l1 > l2 + 1 || l2 >= (long) len) {
+    if (l1 < 0 || l1 > l2 + 1 || l2 >= (LPCint) len) {
 	EC->error("Invalid string range");
     }
 }
@@ -220,9 +220,9 @@ void String::checkRange(long l1, long l2)
 /*
  * return a subrange of a string
  */
-String *String::range(long l1, long l2)
+String *String::range(LPCint l1, LPCint l2)
 {
-    if (l1 < 0 || l1 > l2 + 1 || l2 >= (long) len) {
+    if (l1 < 0 || l1 > l2 + 1 || l2 >= (LPCint) len) {
 	EC->error("Invalid string range");
     }
 

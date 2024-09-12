@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,8 +22,8 @@ public:
     static void init(char *a, char *d, char *i, char **p, int tc);
     static bool typechecking();
     static bool inherit(char *file, Node *label, int priv);
-    static Object *compile(Frame *f, char *file, Object *obj, String **strs,
-			   int nstr, int iflag);
+    static Object *compile(Frame *f, char *file, Object *obj, int nstr,
+			   int iflag);
     static int autodriver();
     static String *objecttype(Node *n);
     static void global(unsigned int sclass, Node *type, Node *n);
@@ -33,6 +33,7 @@ public:
     static void startCond();
     static void startCond2();
     static void endCond();
+    static void saveCond();
     static void matchCond();
     static bool nil(Node *n);
     static Node *concat(Node *n1, Node *n2);
@@ -92,6 +93,7 @@ private:
     static Node *block(Node *n, int type, int flags);
     static Node *reloop(Node *n);
     static Node *endloop(Node *n);
+    static unsigned int aggrType(unsigned int, unsigned int);
     static bool lvalue(Node *n);
     static Node *funcall(Node *call, Node *args, int funcptr);
     static void lvalAggr(Node **n);

@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,6 +21,7 @@
 # define INCLUDE_FILE_IO
 # define INCLUDE_CTYPE
 # include "kfun.h"
+# include "ext.h"
 # include "path.h"
 # include "editor.h"
 # endif
@@ -40,7 +41,7 @@ int kf_editor(Frame *f, int nargs, KFun *kf)
 
     UNREFERENCED_PARAMETER(kf);
 
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	EC->error("editor() in non-persistent object");
     }
     obj = OBJW(f->oindex);
@@ -57,14 +58,14 @@ int kf_editor(Frame *f, int nargs, KFun *kf)
 	Editor::create(obj);
     }
     if (nargs == 0) {
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
     } else {
 	str = Editor::command(obj, f->sp->string->text);
 	f->sp->string->del();
 	if (str != (String *) NULL) {
 	    PUT_STR(f->sp, str);
 	} else {
-	    *f->sp = Value::nil;
+	    *f->sp = nil;
 	}
     }
     return 0;
@@ -100,7 +101,7 @@ int kf_query_editor(Frame *f, int n, KFun *kf)
 	f->sp->array->del();
     }
 
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -135,6 +136,36 @@ static void put(savecontext *x, const char *buf, unsigned int len)
 	memcpy(x->buffer + x->bufsz, buf, len);
 	x->bufsz += len;
     }
+}
+
+/*
+ * save a float
+ */
+static void save_float(savecontext *x, Float *flt)
+{
+# ifdef LARGENUM
+    char buf[26];
+    unsigned short fhigh;
+    Uint flow;
+# else
+    char buf[FLOAT_BUFFER];
+# endif
+
+    flt->ftoa(buf);
+    put(x, buf, strlen(buf));
+# ifdef LARGENUM
+    if (Ext::smallFloat(&fhigh, &flow, flt)) {
+	snprintf(buf, sizeof(buf), "=%04x%08lx", fhigh, (long) flow);
+	put(x, buf, 13);
+    } else {
+	snprintf(buf, sizeof(buf), "=%08lx%016llx", (long) flt->high,
+		 (long long) flt->low);
+	put(x, buf, 25);
+    }
+# else
+    snprintf(buf, sizeof(buf), "=%04x%08lx", flt->high, (long) flt->low);
+    put(x, buf, 13);
+# endif
 }
 
 /*
@@ -189,7 +220,7 @@ static void save_mapping (savecontext*, Mapping*);
  */
 static void save_array(savecontext *x, Array *a)
 {
-    char buf[18];
+    char buf[LPCINT_BUFFER];
     Uint i;
     Value *v;
     Float flt;
@@ -197,13 +228,13 @@ static void save_array(savecontext *x, Array *a)
     i = a->put(x->narrays);
     if (i < x->narrays) {
 	/* same as some previous array */
-	sprintf(buf, "#%lu", (unsigned long) i);
+	snprintf(buf, sizeof(buf), "#%lu", (unsigned long) i);
 	put(x, buf, strlen(buf));
 	return;
     }
     x->narrays++;
 
-    sprintf(buf, "({%d|", a->size);
+    snprintf(buf, sizeof(buf), "({%d|", a->size);
     put(x, buf, strlen(buf));
     for (i = a->size, v = Dataspace::elts(a); i > 0; --i, v++) {
 	switch (v->type) {
@@ -212,16 +243,13 @@ static void save_array(savecontext *x, Array *a)
 	    break;
 
 	case T_INT:
-	    sprintf(buf, "%ld", (long) v->number);
+	    snprintf(buf, sizeof(buf), "%ld", (long) v->number);
 	    put(x, buf, strlen(buf));
 	    break;
 
 	case T_FLOAT:
 	    GET_FLT(v, flt);
-	    flt.ftoa(buf);
-	    put(x, buf, strlen(buf));
-	    sprintf(buf, "=%04x%08lx", flt.high, (long) flt.low);
-	    put(x, buf, 13);
+	    save_float(x, &flt);
 	    break;
 
 	case T_STRING:
@@ -255,7 +283,7 @@ static void save_array(savecontext *x, Array *a)
  */
 static void save_mapping(savecontext *x, Mapping *a)
 {
-    char buf[18];
+    char buf[LPCINT_BUFFER];
     Uint i;
     uindex n;
     Value *v;
@@ -264,7 +292,7 @@ static void save_mapping(savecontext *x, Mapping *a)
     i = a->put(x->narrays);
     if (i < x->narrays) {
 	/* same as some previous mapping */
-	sprintf(buf, "@%lu", (unsigned long) i);
+	snprintf(buf, sizeof(buf), "@%lu", (unsigned long) i);
 	put(x, buf, strlen(buf));
 	return;
     }
@@ -288,7 +316,7 @@ static void save_mapping(savecontext *x, Mapping *a)
 	}
 	v++;
     }
-    sprintf(buf, "([%d|", n);
+    snprintf(buf, sizeof(buf), "([%d|", n);
     put(x, buf, strlen(buf));
 
     for (i = a->size >> 1, v = a->elts; i > 0; --i) {
@@ -303,16 +331,13 @@ static void save_mapping(savecontext *x, Mapping *a)
 	    break;
 
 	case T_INT:
-	    sprintf(buf, "%ld", (long) v->number);
+	    snprintf(buf, sizeof(buf), "%ld", (long) v->number);
 	    put(x, buf, strlen(buf));
 	    break;
 
 	case T_FLOAT:
 	    GET_FLT(v, flt);
-	    flt.ftoa(buf);
-	    put(x, buf, strlen(buf));
-	    sprintf(buf, "=%04x%08lx", flt.high, (long) flt.low);
-	    put(x, buf, 13);
+	    save_float(x, &flt);
 	    break;
 
 	case T_STRING:
@@ -331,16 +356,13 @@ static void save_mapping(savecontext *x, Mapping *a)
 	v++;
 	switch (v->type) {
 	case T_INT:
-	    sprintf(buf, "%ld", (long) v->number);
+	    snprintf(buf, sizeof(buf), "%ld", (long) v->number);
 	    put(x, buf, strlen(buf));
 	    break;
 
 	case T_FLOAT:
 	    GET_FLT(v, flt);
-	    flt.ftoa(buf);
-	    put(x, buf, strlen(buf));
-	    sprintf(buf, "=%04x%08lx", flt.high, (long) flt.low);
-	    put(x, buf, 13);
+	    save_float(x, &flt);
 	    break;
 
 	case T_STRING:
@@ -376,7 +398,7 @@ int kf_save_object(Frame *f, int n, KFun *kf)
     Control *ctrl;
     String *str;
     Inherit *inh;
-    char file[STRINGSZ], buf[18], tmp[STRINGSZ + 8], *_tmp;
+    char file[STRINGSZ], buf[LPCINT_BUFFER], tmp[STRINGSZ + 8], *_tmp;
     savecontext x;
     Float flt;
 
@@ -399,7 +421,7 @@ int kf_save_object(Frame *f, int n, KFun *kf)
     strcpy(tmp, file);
     _tmp = strrchr(tmp, '/');
     _tmp = (_tmp == (char *) NULL) ? tmp : _tmp + 1;
-    sprintf(_tmp, "_tmp%04x", ++count);
+    snprintf(_tmp, sizeof(tmp) - (_tmp - tmp), "_tmp%04x", ++count);
     x.fd = P_open(tmp, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, 0664);
     if (x.fd < 0) {
 	EC->error("Cannot create temporary save file \"/%s\"", tmp);
@@ -410,7 +432,7 @@ int kf_save_object(Frame *f, int n, KFun *kf)
     ctrl = f->ctrl;
     Array::merge();
     x.narrays = 0;
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	var = &f->lwobj->elts[2];
     } else {
 	var = f->data->variable(0);
@@ -440,16 +462,13 @@ int kf_save_object(Frame *f, int n, KFun *kf)
 		    put(&x, " ", 1);
 		    switch (var->type) {
 		    case T_INT:
-			sprintf(buf, "%ld", (long) var->number);
+			snprintf(buf, sizeof(buf), "%ld", (long) var->number);
 			put(&x, buf, strlen(buf));
 			break;
 
 		    case T_FLOAT:
 			GET_FLT(var, flt);
-			flt.ftoa(buf);
-			put(&x, buf, strlen(buf));
-			sprintf(buf, "=%04x%08lx", flt.high, (long) flt.low);
-			put(&x, buf, 13);
+			save_float(&x, &flt);
 			break;
 
 		    case T_STRING:
@@ -489,7 +508,7 @@ int kf_save_object(Frame *f, int n, KFun *kf)
     }
 
     f->sp->string->del();
-    *f->sp = Value::nil;
+    *f->sp = nil;
     return 0;
 }
 # endif
@@ -622,6 +641,42 @@ static char *restore_number(restcontext *x, char *buf, Value *val)
     if (*p == '=') {
 	flt.high = 0;
 	flt.low = 0;
+# ifdef LARGENUM
+	q = p;
+	for (i = 24; i != 0 && isxdigit(*++p); --i) ;
+	p = q;
+	if (i == 0) {
+	    for (i = 8; i > 0; --i) {
+		if (!isxdigit(*++p)) {
+		    restore_error(x, "hexadecimal digit expected");
+		}
+		flt.high <<= 4;
+		if (isdigit(*p)) {
+		    flt.high += *p - '0';
+		} else {
+		    flt.high += toupper(*p) + 10 - 'A';
+		}
+	    }
+	    if ((flt.high & 0x7fff0000L) == 0x7fff0000L) {
+		restore_error(x, "illegal exponent");
+	    }
+	    for (i = 16; i > 0; --i) {
+		if (!isxdigit(*++p)) {
+		    restore_error(x, "hexadecimal digit expected");
+		}
+		flt.low <<= 4;
+		if (isdigit(*p)) {
+		    flt.low += *p - '0';
+		} else {
+		    flt.low += toupper(*p) + 10 - 'A';
+		}
+	    }
+
+	    PUT_FLTVAL(val, flt);
+	    return p + 1;
+	}
+# endif
+
 	for (i = 4; i > 0; --i) {
 	    if (!isxdigit(*++p)) {
 		restore_error(x, "hexadecimal digit expected");
@@ -648,6 +703,9 @@ static char *restore_number(restcontext *x, char *buf, Value *val)
 	    }
 	}
 
+# ifdef LARGENUM
+	Ext::largeFloat(&flt, flt.high, flt.low);
+# endif
 	PUT_FLTVAL(val, flt);
 	return p + 1;
     } else if (isfloat) {
@@ -718,7 +776,7 @@ static char *restore_array(restcontext *x, char *buf, Value *val)
 
     ac_put(x, T_ARRAY, a = Array::create(x->f->data, val->number));
     for (i = a->size, v = a->elts; i > 0; --i) {
-	*v++ = Value::nil;
+	*v++ = nil;
     }
     i = a->size;
     v = a->elts;
@@ -769,7 +827,7 @@ static char *restore_mapping(restcontext *x, char *buf, Value *val)
 
     ac_put(x, T_MAPPING, a = Mapping::create(x->f->data, val->number << 1));
     for (i = a->size, v = a->elts; i > 0; --i) {
-	*v++ = Value::nil;
+	*v++ = nil;
     }
     i = a->size;
     v = a->elts;
@@ -826,12 +884,12 @@ static char *restore_value(restcontext *x, char *buf, Value *val)
 	if (buf[1] != 'i' || buf[2] != 'l') {
 	    restore_error(x, "nil expected");
 	}
-	*val = Value::nil;
+	*val = nil;
 	return buf + 3;
 
     case '#':
 	buf = restore_int(x, buf + 1, val);
-	if ((Uint) val->number >= x->narrays) {
+	if ((LPCuint) val->number >= x->narrays) {
 	    restore_error(x, "bad array reference");
 	}
 	*val = *ac_get(x, (Uint) val->number);
@@ -842,7 +900,7 @@ static char *restore_value(restcontext *x, char *buf, Value *val)
 
     case '@':
 	buf = restore_int(x, buf + 1, val);
-	if ((Uint) val->number >= x->narrays) {
+	if ((LPCuint) val->number >= x->narrays) {
 	    restore_error(x, "bad mapping reference");
 	}
 	*val = *ac_get(x, (Uint) val->number);
@@ -927,7 +985,7 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
      */
     ctrl = obj->control();
     data = f->data;
-    if (f->lwobj != (Array *) NULL) {
+    if (f->lwobj != (LWO *) NULL) {
 	var = &f->lwobj->elts[2];
     } else {
 	var = data->variable(0);
@@ -950,8 +1008,8 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
 		    var->type != T_LWOBJECT) {
 		    data->assignVar(var,
 				    (v->type == T_INT) ?
-				     &Value::zeroInt : (v->type == T_FLOAT) ?
-					    &Value::zeroFloat : &Value::nil);
+				     &zeroInt : (v->type == T_FLOAT) ?
+						 &zeroFloat : &nil);
 		}
 		var++;
 		nvars++;
@@ -967,7 +1025,7 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
     try {
 	EC->push();
 	for (;;) {
-	    if (f->lwobj != (Array *) NULL) {
+	    if (f->lwobj != (LWO *) NULL) {
 		var = &f->lwobj->elts[2];
 	    } else {
 		var = data->variables;
@@ -1052,7 +1110,7 @@ int kf_restore_object(Frame *f, int n, KFun *kf)
 				tmp.del();
 				restore_error(&x, "value has wrong type");
 			    }
-			    if (f->lwobj != (Array *) NULL) {
+			    if (f->lwobj != (LWO *) NULL) {
 				data->assignElt(f->lwobj, var, &tmp);
 			    } else {
 				data->assignVar(var, &tmp);
@@ -1126,7 +1184,7 @@ int kf_write_file(Frame *f, int nargs, KFun *kf)
 	EC->error("write_file() within atomic function");
     }
 
-    f->addTicks(1000 + (Int) 2 * f->sp->string->len);
+    f->addTicks(1000 + (LPCint) 2 * f->sp->string->len);
     f->sp[1].string->del();
     PUT_INTVAL(&f->sp[1], 0);
 
@@ -1177,7 +1235,7 @@ int kf_read_file(Frame *f, int nargs, KFun *kf)
     char file[STRINGSZ], *buf;
     struct stat sbuf;
     off_t l;
-    Int size;
+    LPCint size;
     static int fd;
 
     UNREFERENCED_PARAMETER(kf);
@@ -1197,7 +1255,7 @@ int kf_read_file(Frame *f, int nargs, KFun *kf)
     }
 
     f->sp->string->del();
-    *f->sp = Value::nil;
+    *f->sp = nil;
 
     if (size < 0) {
 	/* size has to be >= 0 */
@@ -1236,7 +1294,7 @@ int kf_read_file(Frame *f, int nargs, KFun *kf)
     if (size == 0 || size > sbuf.st_size) {
 	size = sbuf.st_size;
     }
-    if (size > (Uint) MAX_STRLEN) {
+    if (size > (LPCuint) MAX_STRLEN) {
 	P_close(fd);
 	EC->error("String too long");
     }
@@ -1501,8 +1559,8 @@ static int match(char *pat, char *text)
 
 struct fileinfo {
     String *name;		/* file name */
-    Int size;			/* file size */
-    Int time;			/* file time */
+    LPCint size;		/* file size */
+    LPCint time;		/* file time */
 };
 
 /*
@@ -1597,7 +1655,7 @@ int kf_get_dir(Frame *f, int nargs, KFun *kf)
     ftable = ALLOC(fileinfo, ftabsz = FILEINFO_CHUNK);
     nfiles = 0;
     if (strpbrk(pat, "?*[\\") == (char *) NULL &&
-	getinfo(file, pat, &ftable[0])) {
+	getinfo(dir, pat, &ftable[0])) {
 	/*
 	 * single file
 	 */

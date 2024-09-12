@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -25,6 +25,7 @@ public:
     Array() {
 	prev = next = this;		/* alist sentinel */
     }
+    virtual ~Array() { }
 
     void ref() {
 	refCount++;
@@ -40,14 +41,14 @@ public:
     virtual Array *intersect(Dataspace *data, Array *a2);
     Array *setAdd(Dataspace *data, Array *a2);
     Array *setXAdd(Dataspace *data, Array *a2);
-    unsigned short index(long l);
-    void checkRange(long l1, long l2);
-    Array *range(Dataspace *data, long l1, long l2);
+    unsigned short index(LPCint l);
+    void checkRange(LPCint l1, LPCint l2);
+    Array *range(Dataspace *data, LPCint l1, LPCint l2);
 
     static void init(unsigned int size);
     static Array *alloc(unsigned short size);
-    static Array *create(Dataspace *data, long size);
-    static Array *createNil(Dataspace *data, long size);
+    static Array *create(Dataspace *data, LPCint size);
+    static Array *createNil(Dataspace *data, LPCint size);
     static void freeall();
     static void merge();
     static void clear();
@@ -72,6 +73,7 @@ protected:
 class Mapping : public Array {
 public:
     Mapping(unsigned short size);
+    virtual ~Mapping() { }
 
     void sort();
     virtual bool trim();
@@ -86,7 +88,7 @@ public:
     Array *values(Dataspace *data);
 
     static Mapping *alloc(unsigned short size);
-    static Mapping *create(Dataspace *data, long size);
+    static Mapping *create(Dataspace *data, LPCint size);
 
 protected:
     virtual void deepDelete();
@@ -105,6 +107,7 @@ private:
 class LWO : public Array {
 public:
     LWO(unsigned short size) : Array(size) { }
+    virtual ~LWO() { }
 
     LWO *copy(Dataspace *data);
 

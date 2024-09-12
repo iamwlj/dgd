@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -23,7 +23,7 @@
 # include "object.h"
 # include "xfloat.h"
 # include "data.h"
-# include "dcontrol.h"
+# include "control.h"
 # include "interpret.h"
 # include "comm.h"
 # include "table.h"
@@ -80,7 +80,7 @@ static int ext_value_type(Value *val)
  */
 static Value *ext_value_nil()
 {
-    return &Value::nil;
+    return &nil;
 }
 
 /*
@@ -108,7 +108,7 @@ static Value *ext_value_temp2(Dataspace *data)
 /*
  * retrieve an int from a value
  */
-static Int ext_int_getval(Value *val)
+static LPCint ext_int_getval(Value *val)
 {
     return val->number;
 }
@@ -116,7 +116,7 @@ static Int ext_int_getval(Value *val)
 /*
  * store an int in a value
  */
-static void ext_int_putval(Value *val, Int i)
+static void ext_int_putval(Value *val, LPCint i)
 {
     PUT_INTVAL(val, i);
 }
@@ -132,9 +132,17 @@ double Ext::getFloat(const Float *flt)
     if ((flt->high | flt->low) == 0) {
 	return 0.0;
     } else {
+# ifdef LARGENUM
+	d = ldexp((double) (0x10000 | (flt->high & 0xffff)), 64);
+	d = ldexp(d + flt->low,
+		  ((flt->high >> 16) & 0x7fff) - FLOAT_BIAS - 80);
+	return ((flt->high >> 31) ? -d : d);
+# else
 	d = ldexp((double) (0x10 | (flt->high & 0xf)), 32);
-	d = ldexp(d + flt->low, ((flt->high >> 4) & 0x7ff) - 1023 - 36);
+	d = ldexp(d + flt->low,
+		  ((flt->high >> 4) & 0x7ff) - FLOAT_BIAS - 36);
 	return ((flt->high >> 15) ? -d : d);
+# endif
     }
 }
 
@@ -154,13 +162,13 @@ bool Ext::checkFloat(double *d)
 	return FALSE;
     }
 
-# if (DBL_MANT_DIG > 37)
+# if !defined(LARGENUM) && (DBL_MANT_DIG > 37)
     sign = (*d < 0.0);
     *d = frexp(fabs(*d), &e);
     *d += (double) (1 << (DBL_MANT_DIG - 38));
     *d -= (double) (1 << (DBL_MANT_DIG - 38));
     if (*d >= 1.0) {
-	if (++e > 1023) {
+	if (++e > FLOAT_BIAS) {
 	    return FALSE;
 	}
 	*d = ldexp(*d, -1);
@@ -172,7 +180,7 @@ bool Ext::checkFloat(double *d)
 # else
     frexp(*d, &e);
 # endif
-    if (e <= -1023) {
+    if (e <= -FLOAT_BIAS) {
 	*d = 0.0;
     }
 
@@ -196,7 +204,11 @@ void Ext::putFloat(Float *flt, double d)
 {
     unsigned short sign;
     int e;
-    Uuint m;
+# ifdef LARGENUM
+    double dummy;
+# else
+    uint64_t m;
+# endif
 
     if (d == 0.0) {
 	flt->high = 0;
@@ -204,13 +216,64 @@ void Ext::putFloat(Float *flt, double d)
     } else {
 	sign = (d < 0.0);
 	d = frexp(fabs(d), &e);
-	m = (Uuint) ldexp(d, 37);
-	flt->high = (sign << 15) | ((e - 1 + 1023) << 4) |
+# ifdef LARGENUM
+	d = ldexp(d, 17);
+	flt->high = (sign << 31) | ((e - 1 + FLOAT_BIAS) << 16) |
+		    ((Uint) d & 0xffff);
+	flt->low = (uint64_t) ldexp(modf(d, &dummy), 36) << 28;
+# else
+	m = (uint64_t) ldexp(d, 37);
+	flt->high = (sign << 15) | ((e - 1 + FLOAT_BIAS) << 4) |
 		    ((unsigned short) (m >> 32) & 0xf);
 	flt->low = m;
+# endif
     }
 }
 
+# ifdef LARGENUM
+/*
+ * store a large float in a small one
+ */
+bool Ext::smallFloat(unsigned short *fhigh, Uint *flow, Float *flt)
+{
+    unsigned short exp;
+
+    exp = (flt->high & ~FLOAT_SIGN) >> 16;
+    if (exp == 0) {
+	*fhigh = 0;
+	*flow = 0;
+	return TRUE;
+    }
+    if (exp <= FLOAT_BIAS - 0x3ff || exp > FLOAT_BIAS + 0x3ff ||
+	(flt->low << 12) != 0) {
+	return FALSE;
+    }
+
+    *fhigh = ((flt->high & FLOAT_SIGN) >> 16) +
+	     ((exp - FLOAT_BIAS + 0x3ff) << 4) + ((flt->high >> 12) & 0xf);
+    *flow = (flt->high << 20) + (flt->low >> 44);
+    return TRUE;
+}
+
+/*
+ * expand a small float
+ */
+void Ext::largeFloat(Float *flt, unsigned short fhigh, Uint flow)
+{
+    unsigned short exp;
+
+    exp = (fhigh & ~0x8000) >> 4;
+    if (exp == 0) {
+	flt->high = 0;
+	flt->low = 0;
+    } else {
+	flt->high = ((fhigh & 0x8000) << 16) +
+		    ((exp + FLOAT_BIAS - 0x3ff) << 16) +
+		    ((fhigh & 0xf) << 12) + (flow >> 20);
+	flt->low = (FloatLow) flow << 44;
+    }
+}
+# endif	/* LARGENUM */
 /*
  * retrieve a float from a value
  */
@@ -239,7 +302,7 @@ static int ext_float_putval(Value *val, long double ld)
     PUT_FLTVAL(val, flt);
     return TRUE;
 }
-# endif
+# endif	/* !NOFLOAT */
 
 /*
  * retrieve a string from a value
@@ -478,7 +541,7 @@ void ext_runtime_check(Frame *f, int ticks)
     f->addTicks(ticks);
     if (!f->rlim->noticks && f->rlim->ticks <= 0) {
 	f->rlim->ticks = 0;
-	EC->error("Out of ticks");
+	ext_runtime_error(f, "Out of ticks");
     }
 }
 
@@ -486,7 +549,7 @@ void ext_runtime_check(Frame *f, int ticks)
 /*
  * push int on the stack
  */
-static void ext_vm_int(Frame *f, Int n)
+static void ext_vm_int(Frame *f, LPCint n)
 {
     PUSH_INTVAL(f, n);
 }
@@ -520,7 +583,7 @@ static void ext_vm_param(Frame *f, uint8_t param)
 /*
  * get int parameter
  */
-static Int ext_vm_param_int(Frame *f, uint8_t param)
+static LPCint ext_vm_param_int(Frame *f, uint8_t param)
 {
     return f->argp[param].number;
 }
@@ -546,7 +609,7 @@ static void ext_vm_local(Frame *f, uint8_t local)
 /*
  * get int local variable
  */
-static Int ext_vm_local_int(Frame *f, uint8_t local)
+static LPCint ext_vm_local_int(Frame *f, uint8_t local)
 {
     return (f->fp - local)->number;
 }
@@ -572,7 +635,7 @@ static void ext_vm_global(Frame *f, uint16_t inherit, uint8_t index)
 /*
  * get integer global variable
  */
-static Int ext_vm_global_int(Frame *f, uint16_t inherit, uint8_t index)
+static LPCint ext_vm_global_int(Frame *f, uint16_t inherit, uint8_t index)
 {
     return f->global(inherit, index)->number;
 }
@@ -605,7 +668,7 @@ static void ext_vm_index(Frame *f)
 /*
  * index string
  */
-static Int ext_vm_index_int(Frame *f)
+static LPCint ext_vm_index_int(Frame *f)
 {
     try {
 	Value val;
@@ -636,7 +699,7 @@ static void ext_vm_index2(Frame *f)
 /*
  * index string and keep, and return int
  */
-static Int ext_vm_index2_int(Frame *f)
+static LPCint ext_vm_index2_int(Frame *f)
 {
     try {
 	Value val;
@@ -688,7 +751,7 @@ static void ext_vm_cast(Frame *f, uint8_t type, uint16_t inherit,
 /*
  * cast value to an int
  */
-static Int ext_vm_cast_int(Frame *f)
+static LPCint ext_vm_cast_int(Frame *f)
 {
     if (f->sp->type != T_INT) {
 	ext_runtime_error(f, "Value is not an int");
@@ -712,13 +775,17 @@ static double ext_vm_cast_float(Frame *f)
 /*
  * obj <= "/path/to/thing"
  */
-static Int ext_vm_instanceof(Frame *f, uint16_t inherit, uint16_t index)
+static LPCint ext_vm_instanceof(Frame *f, uint16_t inherit, uint16_t index)
 {
-    Int instance;
+    LPCint instance;
 
-    instance = f->instanceOf(((Uint) inherit << 16) + index);
-    f->sp++;
-    return instance;
+    try {
+	instance = f->instanceOf(((Uint) inherit << 16) + index);
+	f->sp++;
+	return instance;
+    } catch (const char*) {
+	longjmp(*EC->env, 1);
+    }
 }
 
 /*
@@ -768,7 +835,7 @@ static void ext_vm_store_param(Frame *f, uint8_t param)
 /*
  * store int in parameter
  */
-static void ext_vm_store_param_int(Frame *f, uint8_t param, Int number)
+static void ext_vm_store_param_int(Frame *f, uint8_t param, LPCint number)
 {
     Value val;
 
@@ -800,7 +867,7 @@ static void ext_vm_store_local(Frame *f, uint8_t local)
 /*
  * store int in local variable
  */
-static void ext_vm_store_local_int(Frame *f, uint8_t local, Int number)
+static void ext_vm_store_local_int(Frame *f, uint8_t local, LPCint number)
 {
     Value val;
 
@@ -833,7 +900,7 @@ static void ext_vm_store_global(Frame *f, uint16_t inherit, uint8_t index)
  * store int in global variable
  */
 static void ext_vm_store_global_int(Frame *f, uint16_t inherit,
-				    uint8_t index, Int number)
+				    uint8_t index, LPCint number)
 {
     Value val;
 
@@ -983,7 +1050,7 @@ static void ext_vm_stores_param(Frame *f, uint8_t param)
 /*
  * store int in parameter
  */
-static Int ext_vm_stores_param_int(Frame *f, uint8_t param)
+static LPCint ext_vm_stores_param_int(Frame *f, uint8_t param)
 {
     if (--(f->nStores) < f->sp->array->size) {
 	f->storeParam(param, &f->sp->array->elts[f->nStores]);
@@ -1017,7 +1084,7 @@ static void ext_vm_stores_local(Frame *f, uint8_t local)
 /*
  * store int in local variable
  */
-static Int ext_vm_stores_local_int(Frame *f, uint8_t local, Int n)
+static LPCint ext_vm_stores_local_int(Frame *f, uint8_t local, LPCint n)
 {
     if (--(f->nStores) < f->sp->array->size) {
 	f->storeLocal(local, &f->sp->array->elts[f->nStores]);
@@ -1135,7 +1202,7 @@ static void ext_vm_stores_index_index(Frame *f)
 /*
  * integer division
  */
-static Int ext_vm_div_int(Frame *f, Int num, Int denom)
+static LPCint ext_vm_div_int(Frame *f, LPCint num, LPCint denom)
 {
     UNREFERENCED_PARAMETER(f);
 
@@ -1149,7 +1216,7 @@ static Int ext_vm_div_int(Frame *f, Int num, Int denom)
 /*
  * integer left shift
  */
-static Int ext_vm_lshift_int(Frame *f, Int num, Int shift)
+static LPCint ext_vm_lshift_int(Frame *f, LPCint num, LPCint shift)
 {
     UNREFERENCED_PARAMETER(f);
 
@@ -1163,7 +1230,7 @@ static Int ext_vm_lshift_int(Frame *f, Int num, Int shift)
 /*
  * integer modulus
  */
-static Int ext_vm_mod_int(Frame *f, Int num, Int denom)
+static LPCint ext_vm_mod_int(Frame *f, LPCint num, LPCint denom)
 {
     UNREFERENCED_PARAMETER(f);
 
@@ -1177,7 +1244,7 @@ static Int ext_vm_mod_int(Frame *f, Int num, Int denom)
 /*
  * integer right shift
  */
-static Int ext_vm_rshift_int(Frame *f, Int num, Int shift)
+static LPCint ext_vm_rshift_int(Frame *f, LPCint num, LPCint shift)
 {
     UNREFERENCED_PARAMETER(f);
 
@@ -1208,7 +1275,7 @@ static double ext_vm_tofloat(Frame *f)
 /*
  * convert to int
  */
-static Int ext_vm_toint(Frame *f)
+static LPCint ext_vm_toint(Frame *f)
 {
     try {
 	return f->toInt();
@@ -1221,23 +1288,23 @@ static Int ext_vm_toint(Frame *f)
 /*
  * convert float to int
  */
-static Int ext_vm_toint_float(Frame *f, double iflt)
+static LPCint ext_vm_toint_float(Frame *f, double iflt)
 {
     UNREFERENCED_PARAMETER(f);
 
     try {
 	if (iflt >= 0) {
 	    iflt = floor(iflt + 0.5);
-	    if (iflt > 2147483647.0) {
+	    if (iflt > (double) (LPCint) LPCINT_MAX) {
 		EC->error("Result too large");
 	    }
 	} else {
 	    iflt = ceil(iflt - 0.5);
-	    if (iflt < -2147483648.0) {
+	    if (iflt < (double) (LPCint) LPCINT_MIN) {
 		EC->error("Result too large");
 	    }
 	}
-	return (Int) iflt;
+	return (LPCint) iflt;
     } catch (const char*) {
 	longjmp(*EC->env, 1);
     }
@@ -1249,7 +1316,7 @@ static Int ext_vm_toint_float(Frame *f, double iflt)
  */
 static void ext_vm_nil(Frame *f)
 {
-    *--f->sp = Value::nil;
+    *--f->sp = nil;
 }
 
 # ifndef NOFLOAT
@@ -1332,7 +1399,7 @@ static void ext_vm_kfunc(Frame *f, uint16_t n, int nargs)
 /*
  * call kfun with int result
  */
-static Int ext_vm_kfunc_int(Frame *f, uint16_t n, int nargs)
+static LPCint ext_vm_kfunc_int(Frame *f, uint16_t n, int nargs)
 {
     try {
 	f->kfunc(n, nargs);
@@ -1372,7 +1439,7 @@ static void ext_vm_kfunc_spread(Frame *f, uint16_t n, int nargs)
 /*
  * call kfun with spread and int result
  */
-static Int ext_vm_kfunc_spread_int(Frame *f, uint16_t n, int nargs)
+static LPCint ext_vm_kfunc_spread_int(Frame *f, uint16_t n, int nargs)
 {
     try {
 	f->kfunc(n, nargs + f->spread(-1));
@@ -1425,7 +1492,7 @@ static void ext_vm_dfunc(Frame *f, uint16_t inherit, uint8_t n, int nargs)
 /*
  * call direct function with int result
  */
-static Int ext_vm_dfunc_int(Frame *f, uint16_t inherit, uint8_t n, int nargs)
+static LPCint ext_vm_dfunc_int(Frame *f, uint16_t inherit, uint8_t n, int nargs)
 {
     try {
 	f->funcall(NULL, NULL, f->ctrl->imap[f->p_index + inherit], n, nargs);
@@ -1468,8 +1535,8 @@ static void ext_vm_dfunc_spread(Frame *f, uint16_t inherit, uint8_t n,
 /*
  * call direct function with spread and int result
  */
-static Int ext_vm_dfunc_spread_int(Frame *f, uint16_t inherit, uint8_t n,
-				   int nargs)
+static LPCint ext_vm_dfunc_spread_int(Frame *f, uint16_t inherit, uint8_t n,
+				      int nargs)
 {
     try {
 	f->funcall(NULL, NULL, f->ctrl->imap[f->p_index + inherit], n,
@@ -1545,7 +1612,7 @@ static bool ext_vm_pop_bool(Frame *f)
 /*
  * pop value and return int result
  */
-static Int ext_vm_pop_int(Frame *f)
+static LPCint ext_vm_pop_int(Frame *f)
 {
     return (f->sp++)->number;
 }
@@ -1576,7 +1643,7 @@ static bool ext_vm_switch_int(Frame *f)
 /*
  * perform a range switch
  */
-static uint32_t ext_vm_switch_range(Int *table, uint32_t size, Int number)
+static uint32_t ext_vm_switch_range(LPCint *table, uint32_t size, LPCint number)
 {
     uint32_t mid, low, high;
 
@@ -1682,6 +1749,8 @@ static void ext_vm_caught(Frame *f, bool push)
  */
 static void ext_vm_catch_end(Frame *f)
 {
+    UNREFERENCED_PARAMETER(f);
+
     EC->pop();
 }
 
@@ -1743,7 +1812,7 @@ static double ext_vm_fmod(Frame *f, double flt1, double flt2)
     }
 }
 
-static double ext_vm_ldexp(Frame *f, double flt, Int exp)
+static double ext_vm_ldexp(Frame *f, double flt, LPCint exp)
 {
     f->addTicks(1);
     try {
@@ -2235,7 +2304,7 @@ void Ext::kfuns(char *protos, int size, int nkfun)
 	vmtab[115] = (voidf *) NULL;
 # endif
 
-	if (!(*jit_init)(VERSION_VM_MAJOR, VERSION_VM_MINOR, sizeof(Int), 1,
+	if (!(*jit_init)(VERSION_VM_MAJOR, VERSION_VM_MINOR, sizeof(LPCint), 1,
 			 Config::typechecking(), KF_BUILTINS, nkfun,
 			 (uint8_t *) protos, size, (void **) vmtab)) {
 	    jit_compile = NULL;
@@ -2280,8 +2349,7 @@ void Ext::compile(const Frame *f, Control *ctrl)
 	ctrl = OBJR(inh->oindex)->ctrl;
 	ctrl->program();
 	*ft++ = ctrl->nfuncdefs;
-	for (fdef = ctrl->funcs(), j = ctrl->nfuncdefs; j > 0; fdef++, --j)
-	{
+	for (fdef = ctrl->funcs(), j = ctrl->nfuncdefs; j > 0; fdef++, --j) {
 	    *ft++ = PROTO_FTYPE(ctrl->prog + fdef->offset);
 	}
 	*vt++ = ctrl->nvardefs;

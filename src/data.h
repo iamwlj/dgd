@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -44,14 +44,14 @@ public:
     bool modified;		/* dirty bit */
     uindex oindex;		/* index in object table */
     union {
-	Int number;		/* number */
-	Uint objcnt;		/* object creation count */
+	LPCint number;		/* number */
+	LPCuint objcnt;		/* object creation count */
 	String *string;		/* string */
 	Array *array;		/* array or mapping */
     };
-
-    static Value zeroInt, zeroFloat, nil;
 };
+
+extern Value zeroInt, zeroFloat, nil;
 
 # define T_TYPE		0x0f	/* type mask */
 # define T_NIL		0x00
@@ -82,7 +82,7 @@ public:
 			  "array", "mapping", "object", "mixed", "void" }
 # define TNBUFSIZE	24
 
-# define VAL_NIL(v)	((v)->type == Value::nil.type && (v)->number == 0)
+# define VAL_NIL(v)	((v)->type == nil.type && (v)->number == 0)
 # define VAL_TRUE(v)	((v)->number != 0 || (v)->type > T_FLOAT ||	\
 			 ((v)->type == T_FLOAT && (v)->oindex != 0))
 
@@ -96,15 +96,15 @@ struct DCallOut {
 class Dataplane : public Allocated {
 public:
     Dataplane(Dataspace *data);
-    Dataplane(Dataspace *data, Int level);
+    Dataplane(Dataspace *data, LPCint level);
 
     Array::Backup **commitArray(Array *arr, Dataplane *old);
     void discardArray(Array *arr);
 
-    static void commit(Int level, Value *retval);
-    static void discard(Int level);
+    static void commit(LPCint level, Value *retval);
+    static void discard(LPCint level);
 
-    Int level;			/* dataplane level */
+    LPCint level;		/* dataplane level */
 
     short flags;		/* modification flags */
     long schange;		/* # string changes */
@@ -124,7 +124,7 @@ private:
     void commitCallouts(bool merge);
     void discardCallouts();
 
-    static void commitValues(Value *v, unsigned int n, Int level);
+    static void commitValues(Value *v, unsigned int n, LPCint level);
 
     Dataplane *plist;		/* next in per-level linked list */
 };
@@ -141,9 +141,9 @@ public:
     uindex allocCallOut(uindex handle, Uint time, unsigned short mtime,
 			int nargs, Value *v);
     void freeCallOut(unsigned int handle);
-    uindex newCallOut(String *func, Int delay, unsigned int mdelay, Frame *f,
+    uindex newCallOut(String *func, LPCint delay, unsigned int mdelay, Frame *f,
 		      int nargs);
-    Int delCallOut(Uint handle, unsigned short *mtime);
+    LPCint delCallOut(Uint handle, unsigned short *mtime);
     String *callOut(unsigned int handle, Frame *f, int *nargs);
     Array *listCallouts(Dataspace *data);
     void upgrade(unsigned int nvar, unsigned short *vmap, Object *tmpl);
@@ -155,14 +155,14 @@ public:
     static Dataspace *restore(Object *obj, Uint *counttab,
 			      void (*readv) (char*, Sector*, Uint, Uint));
     static void refImports(Array *arr);
-    static void changeMap(Array *map);
+    static void changeMap(Mapping *map);
     static Value *extra(Dataspace *data);
     static void setExtra(Dataspace *data, Value *val);
     static void wipeExtra(Dataspace *data);
-    static Object *upgradeLWO(Array *lwobj, Object *obj);
+    static Object *upgradeLWO(LWO *lwobj, Object *obj);
     static void xport();
     static void init();
-    static void initConv(bool c14, bool c16);
+    static void initConv(bool c14, bool c16, bool cfloat);
     static void converted();
     static Sector swapout(unsigned int frag);
     static void upgradeMemory(Object *tmpl, Object *newob);
@@ -196,6 +196,9 @@ private:
     virtual ~Dataspace();
 
     void freeValues();
+# ifdef LARGENUM
+    void expand();
+# endif
     void loadStrings(void (*readv) (char*, Sector*, Uint, Uint));
     String *string(Uint idx);
     void loadArrays(void (*readv) (char*, Sector*, Uint, Uint));
@@ -222,6 +225,9 @@ private:
     static void convSCallOut0(struct SCallOut *sco, Sector *s, Uint n,
 			      Uint offset,
 			      void (*readv) (char*, Sector*, Uint, Uint));
+# ifdef LARGENUM
+    static void expandValues(struct SValue *v, Uint n);
+# endif
     static Dataspace *conv(Object *obj, Uint *counttab,
 			   void (*readv) (char*, Sector*, Uint, Uint));
     static void fixObjs(struct SValue *v, Uint n, Uint *ctab);

@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2020 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,12 +26,13 @@ public:
     static String *div(Frame *f, String *s1, String *s2, String *s3);
     static String *mod(Frame *f, String *s1, String *s2);
     static String *pow(Frame *f, String *s1, String *s2, String *s3);
-    static String *lshift(Frame *f, String *s1, Int shift, String *s2);
-    static String *rshift(Frame *f, String *s, Int shift);
+    static String *modinv(Frame *f, String *s1, String *s2);
+    static String *lshift(Frame *f, String *s1, LPCint shift, String *s2);
+    static String *rshift(Frame *f, String *s, LPCint shift);
     static String *_and(Frame *f, String *s1, String *s2);
     static String *_or(Frame *f, String *s1, String *s2);
     static String *_xor(Frame *f, String *s1, String *s2);
 
 private:
-    static bool ticks(Frame *f, Uint ticks);
+    static bool ticks(Frame *f, LPCuint ticks);
 };

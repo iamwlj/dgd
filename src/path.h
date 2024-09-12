@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -20,7 +20,44 @@
 class Path {
 public:
     virtual char *resolve(char *buf, char *file) {
-	strcpy(buf, file);
+	char *p, *q, *d;
+
+	strncpy(buf, file, STRINGSZ - 1);
+	buf[STRINGSZ - 1] = '\0';
+	d = p = q = buf;
+	for (;;) {
+	    if (*p == '/' || *p == '\0') {
+		/* reached a directory separator */
+		if (q - 1 == d && d[0] == '.') {
+		    q = d;	/* . */
+		} else if (q - 2 == d && d[0] == '.' && d[1] == '.') {
+		    /* .. */
+		    q = d;
+		    if (q != buf) {
+			for (--q; q != buf && *--q != '/'; ) ;
+		    }
+		}
+		if (q != buf) {
+		    if (q[-1] == '/') {
+			--q;	/* // or path/ */
+		    }
+		    *q++ = *p;
+		}
+		d = q;
+		if (*p == '\0') {
+		    break;
+		}
+		p++;
+	    } else {
+		*q++ = *p++;
+	    }
+	}
+
+	if (q == buf) {
+	    /* "" -> "." */
+	    *q++ = '.';
+	    *q = '\0';
+	}
 	return buf;
     }
     virtual char *string(char *buf, char *file, unsigned int len) {
@@ -33,7 +70,7 @@ public:
 	char buf2[STRINGSZ];
 
 	if (file[0] != '/' && strlen(from) + strlen(file) < STRINGSZ - 4) {
-	    sprintf(buf2, "%s/../%s", from, file);
+	    snprintf(buf2, sizeof(buf2), "%s/../%s", from, file);
 	    file = buf2;
 	}
 	return resolve(buf, file);
@@ -44,21 +81,16 @@ public:
     virtual char *edWrite(char *buf, char *file) {
 	return resolve(buf, file);
     }
-    virtual char *include(char *buf, char *from, char *file, String ***strs,
-			  int *nstr) {
-	UNREFERENCED_PARAMETER(strs);
-	UNREFERENCED_PARAMETER(nstr);
+    virtual char *include(char *buf, char *from, char *file) {
 	return Path::from(buf, from, file);
     }
 };
 
 class PathImpl : public Path {
 public:
-    virtual char *resolve(char *buf, char *file);
     virtual char *edRead(char *buf, char *file);
     virtual char *edWrite(char *buf, char *file);
-    virtual char *include(char *buf, char *from, char *file, String ***strs,
-			  int *nstr);
+    virtual char *include(char *buf, char *from, char *file);
 };
 
 extern Path *PM;

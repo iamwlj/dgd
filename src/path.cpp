@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -25,59 +25,12 @@
 # include "data.h"
 # include "interpret.h"
 # include "path.h"
+# include "ppcontrol.h"
 # include "node.h"
 # include "compile.h"
 
 static PathImpl PMI;
 Path *PM = &PMI;
-
-/*
- * resolve a path
- */
-char *PathImpl::resolve(char *buf, char *file)
-{
-    char *p, *q, *d;
-
-    strncpy(buf, file, STRINGSZ - 1);
-    buf[STRINGSZ - 1] = '\0';
-    d = p = q = buf;
-    for (;;) {
-	if (*p == '/' || *p == '\0') {
-	    /* reached a directory separator */
-	    if (q - 1 == d && d[0] == '.') {
-		/* . */
-		q = d;
-	    } else if (q - 2 == d && d[0] == '.' && d[1] == '.') {
-		/* .. */
-		q = d;
-		if (q != buf) {
-		    for (--q; q != buf && *--q != '/'; ) ;
-		}
-	    }
-	    if (q != buf) {
-		if (q[-1] == '/') {
-		    /* // or path/ */
-		    --q;
-		}
-		*q++ = *p;
-	    }
-	    d = q;
-	    if (*p == '\0') {
-		break;
-	    }
-	    p++;
-	} else {
-	    *q++ = *p++;
-	}
-    }
-
-    if (q == buf) {
-	/* "" -> "." */
-	*q++ = '.';
-	*q = '\0';
-    }
-    return buf;
-}
 
 /*
  * resolve an editor read file path
@@ -126,61 +79,66 @@ char *PathImpl::edWrite(char *buf, char *file)
 }
 
 /*
- * resolve an include path
+ * attempt to include a path
  */
-char *PathImpl::include(char *buf, char *from, char *file, String ***strs,
-			int *nstr)
+char *PathImpl::include(char *buf, char *from, char *file)
 {
     Frame *f;
     int i;
     Value *v;
-    String **str;
+    String *str;
 
-    *strs = NULL;
-    *nstr = 0;
     if (Compile::autodriver()) {
-	return PathImpl::from(buf, from, file);
-    }
+	if (PP->include(PathImpl::from(buf, from, file), (char *) NULL, 0)) {
+	    return buf;
+	}
+    } else {
+	f = cframe;
+	PUSH_STRVAL(f, String::create(from, strlen(from)));
+	PUSH_STRVAL(f, String::create(file, strlen(file)));
+	if (!DGD::callDriver(f, "include_file", 2)) {
+	    if (PP->include(PathImpl::from(buf, from, file), (char *) NULL, 0))
+	    {
+		return buf;
+	    }
+	} else if (f->sp->type == T_STRING) {
+	    /* simple path */
+	    resolve(buf, f->sp->string->text);
+	    if (PP->include(buf, (char *) NULL, 0)) {
+		(f->sp++)->string->del();
+		return buf;
+	    }
+	} else if (f->sp->type == T_ARRAY) {
+	    /*
+	     * Array of strings.  Check that the array does indeed contain only
+	     * strings, then return it.
+	     */
+	    i = f->sp->array->size;
+	    if (i != 0) {
+		v = Dataspace::elts(f->sp->array);
+		while ((v++)->type == T_STRING) {
+		    if (--i == 0) {
+			PathImpl::from(buf, from, file);
 
-    f = cframe;
-    PUSH_STRVAL(f, String::create(from, strlen(from)));
-    PUSH_STRVAL(f, String::create(file, strlen(file)));
-    if (!DGD::callDriver(f, "include_file", 2)) {
-	f->sp++;
-	return PathImpl::from(buf, from, file);
-    }
+			i = f->sp->array->size;
+			str = (--v)->string;
+			PP->include(buf, str->text, str->len);
 
-    if (f->sp->type == T_STRING) {
-	/* simple path */
-	resolve(buf, f->sp->string->text);
-	(f->sp++)->string->del();
-	return buf;
-    } else if (f->sp->type == T_ARRAY) {
-	/*
-	 * Array of strings.  Check that the array does indeed contain only
-	 * strings, then return it.
-	 */
-	i = f->sp->array->size;
-	if (i != 0) {
-	    v = Dataspace::elts(f->sp->array);
-	    while ((v++)->type == T_STRING) {
-		if (--i == 0) {
-		    *nstr = i = f->sp->array->size;
-		    str = ALLOC(String*, i);
-		    do {
-			*str = (--v)->string;
-			(*str++)->ref();
-		    } while (--i != 0);
-		    *strs = str;
-		    (f->sp++)->array->del();
+			while (--i != 0) {
+			    str = (--v)->string;
+			    PP->push(str->text, str->len);
+			}
+			(f->sp++)->del();
 
-		    /* return the untranslated path, as well */
-		    return PathImpl::from(buf, from, file);
+			/* return the untranslated path, as well */
+			return buf;
+		    }
 		}
 	    }
 	}
+
+	(f->sp++)->del();
     }
 
-    (f->sp++)->del();
     return (char *) NULL;
 }

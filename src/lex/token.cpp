@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2019 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -25,6 +25,7 @@
 # include "special.h"
 # include "ppstr.h"
 # include "token.h"
+# include "ppcontrol.h"
 
 /*
  * The functions for getting a (possibly preprocessed) token from the input
@@ -39,7 +40,7 @@ char *yytext;			/* for strings and identifiers */
 static char *yytext1, *yytext2;	/* internal buffers */
 static char *yyend;		/* end of current buffer */
 int yyleng;			/* length of token */
-long yynumber;			/* integer constant */
+LPCint yynumber;		/* integer constant */
 Float yyfloat;			/* floating point constant */
 
 static TokenBuf *tbuffer;	/* current token buffer */
@@ -70,16 +71,29 @@ void TokenBuf::push(Macro *mc, char *buffer, unsigned int buflen, bool eof)
     TokenBuf *tb;
 
     tb = chunknew (tchunk) TokenBuf;
-    tb->strs = (String **) NULL;
-    tb->nstr = 0;
     tb->p = tb->buffer = buffer;
     tb->inbuf = buflen;
     tb->up = tb->ubuf;
+    tb->file = FALSE;
     tb->eof = eof;
     tb->fd = -2;
     tb->mc = mc;
     tb->prev = tbuffer;
+    tb->iprev = NULL;
     tbuffer = tb;
+}
+
+/*
+ * push a copied buffer on the input stream
+ */
+void TokenBuf::push(char *buffer, unsigned int buflen)
+{
+    push((Macro *) NULL,
+	 (char *) memcpy(ALLOC(char, buflen + 1), buffer, buflen),
+	 buflen, FALSE);
+    tbuffer->file = TRUE;
+    tbuffer->fd = -1;
+
 }
 
 /*
@@ -98,20 +112,12 @@ void TokenBuf::pop()
     } else {
 	if (fd >= 0) {
 	    P_close(fd);
-	    FREE(buffer);
-	} else if (prev != (TokenBuf *) NULL) {
-	    for (;;) {
-		strs[0]->del();
-		if (nstr == 0) {
-		    break;
-		}
-		--strs;
-		--nstr;
-	    }
-	    FREE(strs);
 	}
-	ibuffer = prev;
-	FREE(_filename);
+	if (_filename != (char *) NULL) {
+	    FREE(_filename);
+	    ibuffer = iprev;
+	}
+	FREE(buffer);
     }
     tbuffer = prev;
 
@@ -138,13 +144,13 @@ void TokenBuf::clear()
 /*
  * push a file on the input stream
  */
-bool TokenBuf::include(char *file, String **strs, int nstr)
+bool TokenBuf::include(char *file, char *buffer, unsigned int buflen)
 {
     int fd;
     ssizet len;
 
     if (file != (char *) NULL) {
-	if (strs == (String **) NULL) {
+	if (buffer == (char *) NULL) {
 	    struct stat sbuf;
 
 	    /* read from file */
@@ -162,15 +168,16 @@ bool TokenBuf::include(char *file, String **strs, int nstr)
 
 	    push((Macro *) NULL, ALLOC(char, BUF_SIZE), 0, TRUE);
 	} else {
-	    /* read from strings */
-	    --strs;
-	    push((Macro *) NULL, strs[0]->text, strs[0]->len, TRUE);
-	    tbuffer->strs = strs;
-	    tbuffer->nstr = --nstr;
+	    /* read from copied buffer */
+	    push((Macro *) NULL,
+		 (char *) memcpy(ALLOC(char, buflen + 1), buffer, buflen),
+		 buflen, TRUE);
 	    fd = -1;
 	}
 
+	tbuffer->iprev = ibuffer;
 	ibuffer = tbuffer;
+	ibuffer->file = TRUE;
 	ibuffer->fd = fd;
 	len = strlen(file);
 	if (len >= STRINGSZ - 1) {
@@ -259,7 +266,7 @@ void TokenBuf::setpp(int pp)
 
 # define uc(c)	{ \
 		    if ((c) != EOF) { \
-			if ((c) == LF && tbuffer == ibuffer) ibuffer->_line--; \
+			if ((c) == LF && tbuffer->file) ibuffer->_line--; \
 			*(tbuffer->up)++ = (c); \
 		    } \
 		}
@@ -286,18 +293,10 @@ int TokenBuf::gc()
 		if (tb->fd >= 0 &&
 		    (tb->inbuf = P_read(tb->fd, tb->buffer, BUF_SIZE)) > 0) {
 		    tb->p = tb->buffer;
-		} else if (backslash) {
-		    return '\\';
-		} else if (tb->nstr != 0) {
-		    if (tb->prev != (TokenBuf *) NULL) {
-			tb->strs[0]->del();
-		    }
-		    --(tb->strs);
-		    --(tb->nstr);
-		    tb->p = tb->buffer = tb->strs[0]->text;
-		    tb->inbuf = tb->strs[0]->len;
-		    continue;
 		} else if (tb->eof) {
+		    if (backslash) {
+			return '\\';
+		    }
 		    return EOF;
 		} else {
 		    /* otherwise, pop the current token input buffer */
@@ -310,7 +309,7 @@ int TokenBuf::gc()
 	    c = UCHAR(*(tb->p)++);
 	}
 
-	if (c == LF && tb == ibuffer) {
+	if (c == LF && tb->file) {
 	    ibuffer->_line++;
 	    if (!backslash) {
 		return c;
@@ -319,7 +318,7 @@ int TokenBuf::gc()
 	} else if (backslash) {
 	    uc(c);
 	    return '\\';
-	} else if (c == '\\' && tb == ibuffer) {
+	} else if (c == '\\' && tb->file) {
 	    backslash = TRUE;
 	} else {
 	    return c;
@@ -338,8 +337,11 @@ void TokenBuf::skip_comment()
 	do {
 	    c = gc();
 	    if (c == EOF) {
-		error("EOF in comment");
+		PP->error("EOF in comment");
 		return;
+	    }
+	    if (c == LF) {
+		seen_nl = TRUE;
 	    }
 	} while (c != '*');
 
@@ -448,7 +450,7 @@ char *TokenBuf::esc(char *p)
 	c = gc();
 	if (isxdigit(c)) {
 	    i = 0;
-	    n = 3;
+	    n = 2;
 	    do {
 		*p++ = c;
 		i <<= 4;
@@ -510,7 +512,7 @@ int TokenBuf::string(char quote)
 	    }
 	} else if (c == LF || c == EOF) {
 	    if (pp_level == 0) {
-		error("unterminated string");
+		PP->error("unterminated string");
 	    }
 	    uc(c);
 	    break;
@@ -523,7 +525,7 @@ int TokenBuf::string(char quote)
     }
 
     if (pp_level == 0 && p + n > yyend - 4) {
-	error("string too long");
+	PP->error("string too long");
     }
     *p = '\0';
     yyleng = p - yytext;
@@ -536,7 +538,7 @@ int TokenBuf::string(char quote)
 int TokenBuf::gettok()
 {
     int c;
-    long result;
+    LPCint result;
     char *p;
     bool overflow;
     bool is_float, badoctal;
@@ -554,7 +556,7 @@ int TokenBuf::gettok()
     *p++ = c;
     switch (c) {
     case LF:
-	if (tbuffer == ibuffer) {
+	if (tbuffer->file) {
 	    seen_nl = TRUE;
 	    *p = '\0';
 	    return c;
@@ -563,7 +565,7 @@ int TokenBuf::gettok()
 	break;
 
     case HT:
-	if (tbuffer != ibuffer) {
+	if (!tbuffer->file) {
 	    /* expanding a macro: keep separator */
 	    break;
 	}
@@ -575,7 +577,7 @@ int TokenBuf::gettok()
 	/* white space */
 	do {
 	    c = gc();
-	} while (c == ' ' || (c == HT && tbuffer == ibuffer) || c == VT ||
+	} while (c == ' ' || (c == HT && tbuffer->file) || c == VT ||
 		 c == FF || c == CR);
 
 	/* check for comment after white space */
@@ -713,14 +715,14 @@ int TokenBuf::gettok()
 		yyfloat.low = 0;
 		if (pp_level == 0) {
 		    if (p == yyend) {
-			error("too long floating point constant");
+			PP->error("too long floating point constant");
 		    } else {
 			char *buf;
 
 			*p = '\0';
 			buf = yytext;
 			if (!Float::atof(&buf, &yyfloat)) {
-			    error("overflow in floating point constant");
+			    PP->error("overflow in floating point constant");
 			}
 		    }
 		}
@@ -729,9 +731,9 @@ int TokenBuf::gettok()
 		if (pp_level == 0) {
 		    /* unclear if this was decimal or octal */
 		    if (p == yyend) {
-			error("too long integer constant");
+			PP->error("too long integer constant");
 		    } else if (overflow) {
-			error("overflow in integer constant");
+			PP->error("overflow in integer constant");
 		    }
 		}
 		c = INT_CONST;
@@ -835,7 +837,7 @@ int TokenBuf::gettok()
 		    if (p < yyend) {
 			*p++ = c;
 		    }
-		    if (result > 0x0fffffffL) {
+		    if (result > ((LPCuint) LPCUINT_MAX >> 4)) {
 			overflow = TRUE;
 		    }
 		    if (isdigit(c)) {
@@ -861,7 +863,7 @@ int TokenBuf::gettok()
 		if (p < yyend) {
 		    *p++ = c;
 		}
-		if (result > 0x1fffffffL) {
+		if (result > ((LPCuint) LPCUINT_MAX >> 3)) {
 		    overflow = TRUE;
 		}
 		result <<= 3;
@@ -886,11 +888,11 @@ int TokenBuf::gettok()
 	uc(c);
 	if (pp_level == 0) {
 	    if (p == yyend) {
-		error("too long integer constant");
+		PP->error("too long integer constant");
 	    } else if (badoctal) {
-		error("bad octal constant");
+		PP->error("bad octal constant");
 	    } else if (overflow) {
-		error("overflow in integer constant");
+		PP->error("overflow in integer constant");
 	    }
 	}
 	c = INT_CONST;
@@ -899,7 +901,8 @@ int TokenBuf::gettok()
     case '1': case '2': case '3': case '4': case '5':
     case '6': case '7': case '8': case '9':
 	for (;;) {
-	    if (result >= 214748364L && (result > 214748364L || c >= '8')) {
+	    if (result >= LPCINT_MAX / 10 &&
+		(result > LPCINT_MAX / 10 || c >= '8')) {
 		overflow = TRUE;
 	    }
 	    result *= 10;
@@ -930,9 +933,9 @@ int TokenBuf::gettok()
 	uc(c);
 	if (pp_level == 0) {
 	    if (p == yyend) {
-		error("too long integer constant");
+		PP->error("too long integer constant");
 	    } else if (overflow) {
-		error("overflow in integer constant");
+		PP->error("overflow in integer constant");
 	    }
 	}
 	c = INT_CONST;
@@ -958,7 +961,7 @@ int TokenBuf::gettok()
 	}
 	uc(c);
 	if (pp_level == 0 && p == yyend) {
-	    error("too long identifier");
+	    PP->error("too long identifier");
 	}
 	c = IDENTIFIER;
 	break;
@@ -968,11 +971,11 @@ int TokenBuf::gettok()
 	*p++ = c;
 	if (c == '\'') {
 	    if (pp_level == 0) {
-		error("too short character constant");
+		PP->error("too short character constant");
 	    }
 	} else if (c == LF || c == EOF) {
 	    if (pp_level == 0) {
-		error("unterminated character constant");
+		PP->error("unterminated character constant");
 	    }
 	    uc(c);
 	} else {
@@ -985,7 +988,7 @@ int TokenBuf::gettok()
 	    *p++ = c;
 	    if (c != '\'') {
 		if (pp_level == 0) {
-		    error("illegal character constant");
+		    PP->error("illegal character constant");
 		}
 		uc(c);
 	    }
@@ -1014,7 +1017,7 @@ void TokenBuf::skiptonl(int ws)
     for (;;) {
 	switch (gettok()) {
 	case EOF:
-	    error("unterminated line");
+	    PP->error("unterminated line");
 	    --pp_level;
 	    return;
 
@@ -1028,7 +1031,7 @@ void TokenBuf::skiptonl(int ws)
 
 	default:
 	    if (ws) {
-		error("bad token in control");
+		PP->error("bad token in control");
 		ws = FALSE;
 	    }
 	    break;
@@ -1046,7 +1049,7 @@ int TokenBuf::expand(Macro *mc)
 {
     int token;
 
-    if (tbuffer != ibuffer) {
+    if (!tbuffer->file) {
 	TokenBuf *tb;
 
 	token = gc();
@@ -1062,7 +1065,7 @@ int TokenBuf::expand(Macro *mc)
 		return -1;
 	    }
 	    tb = tb->prev;
-	} while (tb != ibuffer);
+	} while (!tb->file);
     }
 
     if (mc->narg >= 0) {
@@ -1120,7 +1123,7 @@ int TokenBuf::expand(Macro *mc)
 		if (token == EOF) {	/* sigh */
 		    line = ibuffer->_line;
 		    ibuffer->_line = startline;
-		    error("EOF in macro call");
+		    PP->error("EOF in macro call");
 		    ibuffer->_line = line;
 		    errcount++;
 		    break;
@@ -1130,7 +1133,7 @@ int TokenBuf::expand(Macro *mc)
 		    if (s->len < 0) {
 			line = ibuffer->_line;
 			ibuffer->_line = startline;
-			error("macro argument too long");
+			PP->error("macro argument too long");
 			ibuffer->_line = line;
 			errcount++;
 		    } else if (narg < mc->narg) {
@@ -1181,7 +1184,7 @@ int TokenBuf::expand(Macro *mc)
 	--pp_level;
 
 	if (errcount == 0 && narg != mc->narg) {
-	    error("macro argument count mismatch");
+	    PP->error("macro argument count mismatch");
 	    errcount++;
 	}
 
@@ -1266,7 +1269,8 @@ int TokenBuf::expand(Macro *mc)
 			    if (token == IDENTIFIER) {
 				Macro *m;
 
-				if ((m=Macro::lookup(yytext)) != (Macro *) NULL) {
+				if ((m=Macro::lookup(yytext)) != (Macro *) NULL)
+				{
 				    token = expand(m);
 				    if (token > 0) {
 					continue;
@@ -1300,7 +1304,7 @@ int TokenBuf::expand(Macro *mc)
 	    narg = s->len;	/* so s can be deleted before the push */
 	    delete s;
 	    if (narg < 0) {
-		error("macro expansion too large");
+		PP->error("macro expansion too large");
 	    } else {
 		push(mc, strcpy(ALLOC(char, narg + 1), ppbuf), narg, FALSE);
 	    }

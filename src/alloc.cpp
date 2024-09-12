@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -783,7 +783,7 @@ static MemHeader *hlist;	/* list of all dynamic memory chunks */
 static AllocImpl MMI;
 Alloc *MM = &MMI;
 
-int AllocImpl::sLevel;
+static int sLevel;
 
 /*
  * initialize memory manager
@@ -894,7 +894,8 @@ void AllocImpl::free(char *mem)
  * reallocate memory
  */
 # ifdef MEMDEBUG
-char *AllocImpl::realloc(char *mem, size_t size1, size_t size2, const char *file, int line)
+char *AllocImpl::realloc(char *mem, size_t size1, size_t size2,
+			 const char *file, int line)
 # else
 char *AllocImpl::realloc(char *mem, size_t size1, size_t size2)
 # endif
@@ -998,32 +999,33 @@ void AllocImpl::purge()
 
     while (hlist != (MemHeader *) NULL) {
 	char buf[160];
-	size_t n;
+	size_t n, len;
 
 	n = (hlist->size & SIZE_MASK) - MOFFSET;
 	if (n >= DLIMIT) {
 	    n -= SIZETSIZE;
 	}
 # ifdef MEMDEBUG
-	sprintf(buf, "FREE(%08lx/%u), %s line %u:\012", /* LF */
-		(unsigned long) (hlist + 1), (unsigned int) n, hlist->file,
-		hlist->line);
+	snprintf(buf, sizeof(buf), "FREE(%08lx/%u), %s line %u:\012", /* LF */
+		 (unsigned long) (hlist + 1), (unsigned int) n, hlist->file,
+		 hlist->line);
 # else
-	sprintf(buf, "FREE(%08lx/%u):\012", /* LF */
-		(unsigned long) (hlist + 1), (unsigned int) n);
+	snprintf(buf, sizeof(buf), "FREE(%08lx/%u):\012", /* LF */
+		 (unsigned long) (hlist + 1), (unsigned int) n);
 # endif
 	if (n > 26) {
 	    n = 26;
 	}
 	for (p = (char *) (hlist + 1); n > 0; --n, p++) {
+	    len = strlen(buf);
 	    if (*p >= ' ') {
-		sprintf(buf + strlen(buf), " '%c", *p);
+		snprintf(buf + len, sizeof(buf) - len, " '%c", *p);
 	    } else {
-		sprintf(buf + strlen(buf), " %02x", UCHAR(*p));
+		snprintf(buf + len, sizeof(buf) - len, " %02x", UCHAR(*p));
 	    }
 	}
 	EC->message("%s\012", buf);	/* LF */
-	MemChunk::free(hlist + 1);
+	free((char *) (hlist + 1));
     }
 # endif
 

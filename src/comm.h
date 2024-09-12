@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2019 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -27,6 +27,7 @@ public:
     virtual bool udp(char *challenge, unsigned int len) = 0;
     virtual void del() = 0;
     virtual void block(int flag) = 0;
+    virtual void stop() = 0;
     virtual bool udpCheck() = 0;
     virtual int read(char *buf, unsigned int len) = 0;
     virtual int readUdp(char *buf, unsigned int len) = 0;
@@ -67,9 +68,10 @@ public:
 
 class Comm {
 public:
-    static bool init(int, int, char**, char**, char**,
-				   unsigned short*, unsigned short*,
-				   unsigned short*, int, int, int);
+    static bool init(int n, int p, char **thosts, char **bhosts, char **dhosts,
+		     unsigned short *tports, unsigned short *bports,
+		     unsigned short *dports, int ntelnet, int nbinary,
+		     int ndatagram);
     static void clear();
     static void finish();
     static void listen();
@@ -79,6 +81,7 @@ public:
     static void challenge(Object *obj, String *str);
     static void flush();
     static void block(Object *obj, int block);
+    static void stop(Object *obj);
     static void receive(Frame*, Uint, unsigned int);
     static String *ipNumber(Object*);
     static String *ipName(Object*);
@@ -87,6 +90,7 @@ public:
     static void connect(Frame *f, Object *obj, char *addr, unsigned short port);
     static void connectDgram(Frame *f, Object *obj, int uport, char *addr,
 			     unsigned short port);
+    static eindex numUsers();
     static Array *listUsers(Dataspace*);
     static bool isConnection(Object*);
     static bool save(int);

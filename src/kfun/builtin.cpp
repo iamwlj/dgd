@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,16 +22,16 @@
 # include "kfun.h"
 
 /*
- * convert an Int to a string
+ * convert a LPCint to a string
  */
-static char *kf_itoa(Int i, char *buffer)
+static char *kf_itoa(LPCint i, char *buffer)
 {
-    Uint u;
+    LPCuint u;
     char *p;
 
     u = (i >= 0) ? i : -i;
 
-    p = buffer + 11;
+    p = buffer + LPCINT_BUFFER - 1;
     *p = '\0';
     do {
 	*--p = '0' + u % 10;
@@ -72,7 +72,7 @@ int kf_add(Frame *f, int n, KFun *kf)
 {
     String *str;
     Array *a;
-    char *num, buffer[18];
+    char *num, buffer[FLOAT_BUFFER];
     Float f1, f2;
     long l;
 
@@ -165,7 +165,7 @@ int kf_add(Frame *f, int n, KFun *kf)
 
     case T_ARRAY:
 	if (f->sp->type == T_ARRAY) {
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->add(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -177,7 +177,7 @@ int kf_add(Frame *f, int n, KFun *kf)
 
     case T_MAPPING:
 	if (f->sp->type == T_MAPPING) {
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->add(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -300,7 +300,7 @@ int kf_and(Frame *f, int n, KFun *kf)
 
     case T_ARRAY:
 	if (f->sp->type == T_ARRAY) {
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->intersect(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -312,7 +312,7 @@ int kf_and(Frame *f, int n, KFun *kf)
 
     case T_MAPPING:
 	if (f->sp->type == T_ARRAY) {
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->intersect(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -1237,7 +1237,7 @@ int kf_or(Frame *f, int n, KFun *kf)
 
     case T_ARRAY:
 	if (f->sp->type == T_ARRAY) {
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->setAdd(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -1390,7 +1390,7 @@ int kf_rangef(Frame *f, int n, KFun *kf)
 	if (VAL_NIL(f->sp)) {
 	    kf->argError(2);
 	}
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
 	kf->ternary(f);
 
 	return 0;
@@ -1462,7 +1462,7 @@ int kf_ranget(Frame *f, int n, KFun *kf)
 	}
 	--f->sp;
 	f->sp[0] = f->sp[1];
-	f->sp[1] = Value::nil;
+	f->sp[1] = nil;
 	kf->ternary(f);
 
 	return 0;
@@ -1527,8 +1527,8 @@ int kf_range(Frame *f, int n, KFun *kf)
     }
     if (f->sp->type == T_LWOBJECT &&
 	f->sp->array->elts[0].type == T_OBJECT) {
-	*--f->sp = Value::nil;
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
+	*--f->sp = nil;
 	kf->ternary(f);
 
 	return 0;
@@ -1648,7 +1648,7 @@ int kf_sub(Frame *f, int n, KFun *kf)
 	if (f->sp->type == T_ARRAY) {
 	    Array *a;
 
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->sub(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -1662,7 +1662,7 @@ int kf_sub(Frame *f, int n, KFun *kf)
 	if (f->sp->type == T_ARRAY) {
 	    Array *a;
 
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->sub(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -1792,7 +1792,7 @@ char pt_toint[] = { C_STATIC, 1, 0, 0, 7, T_INT, T_MIXED };
  */
 int kf_toint(Frame *f, int n, KFun *kf)
 {
-    Int num;
+    LPCint num;
 
     UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
@@ -1950,7 +1950,7 @@ int kf_xor(Frame *f, int n, KFun *kf)
 
     case T_ARRAY:
 	if (f->sp->type == T_ARRAY) {
-	    f->addTicks((Int) f->sp[1].array->size + f->sp->array->size);
+	    f->addTicks((LPCint) f->sp[1].array->size + f->sp->array->size);
 	    a = f->sp[1].array->setXAdd(f->data, f->sp->array);
 	    f->sp->array->del();
 	    f->sp++;
@@ -2006,7 +2006,7 @@ char pt_tostring[] = { C_STATIC, 1, 0, 0, 7, T_STRING, T_MIXED };
  */
 int kf_tostring(Frame *f, int n, KFun *kf)
 {
-    char *num, buffer[18];
+    char *num, buffer[FLOAT_BUFFER];
     Float flt;
 
     UNREFERENCED_PARAMETER(n);
@@ -2085,11 +2085,11 @@ int kf_ckrangef(Frame *f, int n, KFun *kf)
     }
     if (f->sp[1].type == T_STRING) {
 	(--f->sp)->type = T_INT;
-	f->sp->number = (Int) f->sp[2].string->len - 1;
+	f->sp->number = (LPCint) f->sp[2].string->len - 1;
 	f->sp[2].string->checkRange(f->sp[1].number, f->sp->number);
     } else if (f->sp[1].type == T_ARRAY) {
 	(--f->sp)->type = T_INT;
-	f->sp->number = (Int) f->sp[2].array->size - 1;
+	f->sp->number = (LPCint) f->sp[2].array->size - 1;
 	f->sp[2].array->checkRange(f->sp[1].number, f->sp->number);
     } else {
 	kf->argError(1);
@@ -2144,16 +2144,16 @@ int kf_call_other(Frame *f, int nargs, KFun *kf)
 {
     Value *val;
     Object *obj;
-    Array *lwobj;
+    LWO *lwobj;
 
     UNREFERENCED_PARAMETER(kf);
 
     obj = (Object *) NULL;
-    lwobj = (Array *) NULL;
+    lwobj = (LWO *) NULL;
     val = &f->sp[nargs - 1];
     if (val->type == T_STRING) {
 	*--f->sp = *val;
-	*val = Value::nil;	/* erase old copy */
+	*val = nil;		/* erase old copy */
 	DGD::callDriver(f, "call_object", 1);
 	*val = *f->sp++;
     }
@@ -2163,7 +2163,7 @@ int kf_call_other(Frame *f, int nargs, KFun *kf)
 	break;
 
     case T_LWOBJECT:
-	lwobj = val->array;
+	lwobj = dynamic_cast<LWO *> (val->array);
 	break;
 
     default:
@@ -2176,7 +2176,7 @@ int kf_call_other(Frame *f, int nargs, KFun *kf)
 	 * call from destructed object
 	 */
 	f->pop(nargs);
-	*--f->sp = Value::nil;
+	*--f->sp = nil;
 	return 0;
     }
 
@@ -2184,7 +2184,7 @@ int kf_call_other(Frame *f, int nargs, KFun *kf)
 		nargs - 2)) {
 	val = f->sp++;		/* function exists */
     } else {
-	val = &Value::nil;	/* function doesn't exist */
+	val = &nil;		/* function doesn't exist */
     }
     (f->sp++)->string->del();
     f->sp->del();
@@ -2255,7 +2255,7 @@ int kf_statuso_idx(Frame *f, int nargs, KFun *kf)
 	if (f->sp[1].array->elts[0].type == T_OBJECT) {
 	    n = f->sp[1].array->elts[0].oindex;
 	    f->sp[1].array->del();
-	    f->sp[1] = Value::nil;
+	    f->sp[1] = nil;
 	} else {
 	    /* no user-visible parts within (right?) */
 	    EC->error("Index on bad type");
@@ -2316,7 +2316,7 @@ int kf_nil(Frame *f, int n, KFun *kf)
     UNREFERENCED_PARAMETER(n);
     UNREFERENCED_PARAMETER(kf);
 
-    *--f->sp = Value::nil;
+    *--f->sp = nil;
     return 0;
 }
 # endif
@@ -2347,7 +2347,7 @@ int kf_status(Frame *f, int nargs, KFun *kf)
 	switch (f->sp->type) {
 	case T_INT:
 	    if (f->sp->number != 0) {
-		*f->sp = Value::nil;
+		*f->sp = nil;
 		return 0;
 	    }
 	    a = Config::status(f);
@@ -2430,7 +2430,7 @@ char pt_add_float_string[] = { C_STATIC, 2, 0, 0, 8, T_STRING, T_FLOAT,
  */
 int kf_add_float_string(Frame *f, int n, KFun *kf)
 {
-    char buffer[18];
+    char buffer[FLOAT_BUFFER];
     Float flt;
     String *str;
     long l;
@@ -2463,7 +2463,7 @@ char pt_add_int_string[] = { C_STATIC, 2, 0, 0, 8, T_STRING, T_INT, T_STRING };
  */
 int kf_add_int_string(Frame *f, int n, KFun *kf)
 {
-    char buffer[12], *num;
+    char buffer[LPCINT_BUFFER], *num;
     String *str;
     long l;
 
@@ -2520,7 +2520,7 @@ char pt_add_string_float[] = { C_STATIC, 2, 0, 0, 8, T_STRING, T_STRING,
  */
 int kf_add_string_float(Frame *f, int n, KFun *kf)
 {
-    char buffer[18];
+    char buffer[FLOAT_BUFFER];
     Float flt;
     String *str;
 
@@ -2552,7 +2552,7 @@ char pt_add_string_int[] = { C_STATIC, 2, 0, 0, 8, T_STRING, T_STRING, T_INT };
  */
 int kf_add_string_int(Frame *f, int n, KFun *kf)
 {
-    char buffer[12], *num;
+    char buffer[LPCINT_BUFFER], *num;
     String *str;
 
     UNREFERENCED_PARAMETER(n);
@@ -3121,14 +3121,14 @@ char pt_sum[] = { C_STATIC | C_ELLIPSIS, 0, 1, 0, 7, T_MIXED, T_MIXED };
  */
 int kf_sum(Frame *f, int nargs, KFun *kf)
 {
-    char buffer[12], *num;
+    char buffer[FLOAT_BUFFER], *num;
     String *s;
     Array *a;
     Value *v, *e1, *e2;
     int i, type, vtype, nonint;
     long size;
     ssizet len;
-    Int result;
+    LPCint result;
     long isize;
 
     UNREFERENCED_PARAMETER(kf);
@@ -3282,21 +3282,21 @@ int kf_sum(Frame *f, int nargs, KFun *kf)
 	    case SUM_ALLOCATE_NIL:
 		v++;
 		for (len = v->number; len > 0; --len) {
-		    *--e1 = Value::nil;
+		    *--e1 = nil;
 		}
 		continue;
 
 	    case SUM_ALLOCATE_INT:
 		v++;
 		for (len = v->number; len > 0; --len) {
-		    *--e1 = Value::zeroInt;
+		    *--e1 = zeroInt;
 		}
 		continue;
 
 	    case SUM_ALLOCATE_FLT:
 		v++;
 		for (len = v->number; len > 0; --len) {
-		    *--e1 = Value::zeroFloat;
+		    *--e1 = zeroFloat;
 		}
 		continue;
 
@@ -3410,6 +3410,107 @@ int kf_calltr_idx_idx(Frame *f, int n, KFun *kf)
 	EC->error("Array index out of range");
     }
     f->sp++;
+    return 0;
+}
+# endif
+
+
+# ifdef FUNCDEF
+FUNCDEF("strlen", kf_strlen, pt_strlen, 0)
+# else
+char pt_strlen[] = { C_TYPECHECKED | C_STATIC, 1, 0, 0, 7, T_INT, T_STRING };
+
+/*
+ * return the length of a string
+ */
+int kf_strlen(Frame *f, int n, KFun *kf)
+{
+    ssizet len;
+
+    UNREFERENCED_PARAMETER(n);
+    UNREFERENCED_PARAMETER(kf);
+
+    len = f->sp->string->len;
+    f->sp->string->del();
+    PUT_INTVAL(f->sp, len);
+    return 0;
+}
+# endif
+
+
+# ifdef FUNCDEF
+FUNCDEF("[..]", kf_rangeft_str, pt_rangeft_str, 0)
+# else
+char pt_rangeft_str[] = { C_STATIC, 3, 0, 0, 9, T_STRING, T_STRING, T_INT,
+			  T_INT };
+/*
+ * value [ int .. int ]
+ */
+int kf_rangeft_str(Frame *f, int n, KFun *kf)
+{
+    String *str;
+
+    UNREFERENCED_PARAMETER(n);
+    UNREFERENCED_PARAMETER(kf);
+
+    f->addTicks(2);
+    str = f->sp[2].string->range(f->sp[1].number, f->sp->number);
+    f->sp += 2;
+    f->sp->string->del();
+    PUT_STR(f->sp, str);
+
+    return 0;
+}
+# endif
+
+
+# ifdef FUNCDEF
+FUNCDEF("[..]", kf_rangef_str, pt_rangef_str, 0)
+# else
+char pt_rangef_str[] = { C_STATIC, 2, 0, 0, 8, T_STRING, T_STRING, T_INT };
+
+/*
+ * value [ int .. ]
+ */
+int kf_rangef_str(Frame *f, int n, KFun *kf)
+{
+    String *str;
+
+    UNREFERENCED_PARAMETER(n);
+    UNREFERENCED_PARAMETER(kf);
+
+    f->addTicks(2);
+    str = f->sp[1].string->range(f->sp->number, f->sp[1].string->len - 1L);
+    f->sp++;
+    f->sp->string->del();
+    PUT_STR(f->sp, str);
+
+    return 0;
+}
+# endif
+
+
+# ifdef FUNCDEF
+FUNCDEF("[..]", kf_ranget_str, pt_ranget_str, 0)
+# else
+char pt_ranget_str[] = { C_STATIC, 2, 0, 0, 8, T_STRING, T_STRING, T_INT };
+
+/*
+ * value [ .. int ]
+ */
+int kf_ranget_str(Frame *f, int n, KFun *kf)
+{
+    String *str;
+
+    UNREFERENCED_PARAMETER(n);
+    UNREFERENCED_PARAMETER(kf);
+
+    f->addTicks(2);
+    str = f->sp[1].string->range(0, f->sp->number);
+    f->sp++;
+    f->sp->string->del();
+    PUT_STR(f->sp, str);
+
     return 0;
 }
 # endif
