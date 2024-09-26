@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2021 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2022 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -666,6 +666,7 @@ bool Float::atof(char **s, Float *f)
     flt b, c, *t;
     unsigned short e, h;
     char *p, *q;
+    bool digits;
 
     p = *s;
 
@@ -679,6 +680,7 @@ bool Float::atof(char **s, Float *f)
 
     a.exp = 0;
     b.low = 0;
+    digits = FALSE;
 
     /* digits before . */
     while (isdigit(*p)) {
@@ -697,6 +699,7 @@ bool Float::atof(char **s, Float *f)
 	if (a.exp > 0xffff - 10) {
 	    return FALSE;
 	}
+	digits = TRUE;
     }
 
     /* digits after . */
@@ -719,7 +722,11 @@ bool Float::atof(char **s, Float *f)
 		}
 		f_mult(&c, &tenths[0]);
 	    }
+	    digits = TRUE;
 	}
+    }
+    if (!digits) {
+	return FALSE;
     }
 
     /* exponent */
